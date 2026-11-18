@@ -106,7 +106,7 @@ Then run `npx eslint .`, without `--cache`: ESLint would replay old warnings for
 
 ## Quick start with Vite+
 
-Vite+ brings its own oxlint, so install only the plugin: `npm install --save-dev oxlint-plugin-slimdeer`. `vp lint`, and editors that start `vp lint --lsp`, read the `lint` block of `vite.config.ts`, not `.oxlintrc.json`:
+Vite+ brings its own oxlint, so install only the plugin: `vp install -D oxlint-plugin-slimdeer`. `vp lint`, and editors that start `vp lint --lsp`, read the `lint` block of `vite.config.ts`, not `.oxlintrc.json`:
 
 ```ts
 // vite.config.ts
@@ -121,7 +121,7 @@ export default defineConfig({
 });
 ```
 
-Then run `npx vp lint`.
+Then run `vp lint`. A new Vite+ app pins its package manager, so `npm` and `npx` can refuse to run in it (`EBADDEVENGINES`). There, run the commands the lint and the review page give with `vp exec` in place of `npx`, as in `vp exec oxlint-plugin-slimdeer --review --flagged`.
 
 ## What a lint shows
 
@@ -235,7 +235,7 @@ A pull request that adds a heavy image then gets a warning on the line that uses
 
 ![A GitHub pull request's Files changed tab: under the added line that uses /hero.png, a check warning from slimdeer(compressible-image) says hero.png could be 70% smaller (509 kB → 151 kB) and gives the command that shrinks it](https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/docs/images/pull-request.png)
 
-With ESLint, run `npx eslint .`: `actions/setup-node` turns its output into annotations. With Vite+, run `npx vp lint --format github`. GitHub annotates at most 10 warnings and 10 errors per step, your other lint warnings included. The rule also writes the job summary, with no option or permission: a table of the flagged images (up to 200) and the commands that review and shrink them.
+With ESLint, run `npx eslint .`: `actions/setup-node` turns its output into annotations. With Vite+, run `vp lint --format github`. GitHub annotates at most 10 warnings and 10 errors per step, your other lint warnings included. The rule also writes the job summary, with no option or permission: a table of the flagged images (up to 200) and the commands that review and shrink them.
 
 ### Commit the cache
 
