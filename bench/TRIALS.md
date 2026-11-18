@@ -24,6 +24,8 @@ Development version 0.4.0, engine hash prefix `ad2351d25459d45c`, Node 26.12.0, 
 | Starlight portraits | 208,935 | 2 / 12 | 14,310 B | 6.8% | 0.74 s | 62 ms |
 | Vue guide images | 1,213,949 | 19 / 19 | 898,356 B | 74.0% | 7.11 s | 67 ms |
 
+Version 0.6.1, run again on November 17, 2026 on the same machine, gave the same result for all 36 images: the same compressed size, score and outcome for each, so the same flagged counts and savings. The table and the JSON file are the 0.4.0 run.
+
 Each cold result is one run with an empty cache; cached time is the median of three later checks. Timings include CLI startup, scanning and measurement, and exclude downloading. The samples ran sequentially without other plugin compression tests. [trials-results.json](trials-results.json) retains per-image sizes, scores, outcomes and SHA-256 hashes.
 
 The four reported Docusaurus images scored 73.1–90.7 on SSIMULACRA2, the two Starlight portraits scored about 78.2, and the Vue candidates scored 89.0–92.6. Those are perceptual estimates from lossy compression. The lower JPEG scores particularly warrant a visual comparison or a higher explicit target before replacing an original.
