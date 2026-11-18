@@ -361,7 +361,7 @@ function pieces(paths, format, platform) {
     if (one.shell) powershell = without(one.text, ` ${arg}${suffix(target, format)}`);
     return { arg, powershell: Boolean(one.shell) };
   });
-  return { npx: shrinkCommand([], undefined, platform).text, powershell, args };
+  return { plain: shrinkCommand([], undefined, platform).text, powershell, args };
 }
 
 /** How a command ends for `target` and `format`, as shrinkCommand() ends it. */
@@ -405,7 +405,7 @@ function commands(data, on) {
   const chosen = data.images.filter((_, i) => on[i]);
   if (chosen.length === 0) return { lines: [], shell: "" };
   const powershell = chosen.some((image) => image.powershell);
-  const runner = powershell ? data.powershell : data.npx;
+  const runner = powershell ? data.powershell : data.plain;
   const lines = [];
   for (const suffix of new Set(chosen.map((image) => image.suffix))) {
     let line = runner;

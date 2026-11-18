@@ -95,6 +95,19 @@ export function literal(arg, platform = process.platform) {
   return platform === "win32" ? `'${arg.replace(/['\u2018-\u201b]/g, "$&$&")}'` : `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Whether Vite+ started this process: it sets VP_USER_AGENT ("vp/1.7.0") for what `vp lint` and `vp exec` run. */
+export function underVitePlus(env = process.env) {
+  return (env.VP_USER_AGENT ?? "").startsWith("vp/");
+}
+
+/**
+ * How a printed command starts. A new Vite+ app pins its package manager, and npm then refuses to run
+ * npx in it (EBADDEVENGINES), so under Vite+ the commands go through `vp exec`.
+ */
+export function runner(env = process.env) {
+  return `${underVitePlus(env) ? "vp exec" : "npx"} oxlint-plugin-slimdeer`;
+}
+
 /**
  * A runnable fix command, or with `format` ("webp", "avif") the one that writes copies in that format;
  * unusual Windows paths use PowerShell and bypass npm's batch shim.
@@ -132,7 +145,7 @@ function command(flags, files, { target, format }, platform, options = []) {
   const powershell = platform === "win32" && args.some((arg) => arg.startsWith("'"));
   // npx.cmd adds a cmd.exe parsing pass, which expands percent signs even inside quotes.
   const binary = fileURLToPath(new URL("../bin/slimdeer.js", import.meta.url));
-  const runner = powershell ? `& ${quote(process.execPath, platform)} ${quote(binary, platform)}` : "npx oxlint-plugin-slimdeer";
+  const start = powershell ? `& ${quote(process.execPath, platform)} ${quote(binary, platform)}` : runner();
   const last = `${target === undefined ? "" : ` --target ${target}`}${format === undefined ? "" : ` --format ${format}`}`;
-  return { text: `${[runner, ...flags, ...args].join(" ")}${last}`, shell: powershell ? " in PowerShell" : "" };
+  return { text: `${[start, ...flags, ...args].join(" ")}${last}`, shell: powershell ? " in PowerShell" : "" };
 }

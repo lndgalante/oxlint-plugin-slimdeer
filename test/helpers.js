@@ -11,6 +11,8 @@ import { crc32, deflateSync } from "node:zlib";
 // the tests' own lints mustn't write into the job summary of the CI run testing them
 delete process.env.GITHUB_STEP_SUMMARY;
 delete process.env.GITHUB_WORKSPACE;
+// run by Vite+ (`vp exec`), they would print `vp exec` commands, and the expectations say npx
+delete process.env.VP_USER_AGENT;
 
 export const plugin = fileURLToPath(new URL("..", import.meta.url));
 const example = join(plugin, "example");

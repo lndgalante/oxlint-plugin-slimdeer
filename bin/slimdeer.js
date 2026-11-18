@@ -11,7 +11,7 @@ import { kind } from "../src/images.js";
 import { physical } from "../src/scan.js";
 import { plain, shrink } from "../src/shrink.js";
 import { readFlagged } from "../src/summary.js";
-import { count, pathFrom, printable, quote, size } from "../src/text.js";
+import { count, pathFrom, printable, quote, runner, size, underVitePlus } from "../src/text.js";
 
 const HELP = `usage: oxlint-plugin-slimdeer IMAGE... [--target auto|T] [--format webp|avif]
        oxlint-plugin-slimdeer IMAGE -o OUT [--target auto|T]
@@ -79,7 +79,7 @@ const FLAGS = new Set(["--check", "--flagged", "--json", "--review", "--open", "
 const NAMED = { ".png": "png", ".apng": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp", ".avif": "avif" };
 // What --flagged finds where no lint left a list: none ran here (or one ran in a folder above), eslint
 // ran with --cache, or a lint here flagged nothing and had no cache folder to leave an empty list in.
-const NO_LIST = "no list of flagged images here: lint in this folder first (npx oxlint, or eslint without --cache); if a lint here flagged no image, there is nothing to do";
+const NO_LIST = `no list of flagged images here: lint in this folder first (${underVitePlus() ? "vp lint" : "npx oxlint"}, or eslint without --cache); if a lint here flagged no image, there is nothing to do`;
 
 // A reader that stops early (| head) closes the pipe: the printing stops there, but the work goes on.
 // Each image is written whole, one by one, and a list shrunk halfway without a word would be worse.
@@ -197,7 +197,7 @@ async function main(args) {
     }
   }
   // each copy needs its own change in the code, which the review page lets a person choose
-  if (fromLint && format) return fail(`--flagged --format would write a new file for every image the lint flagged, and each one needs a change in the code: review them first with npx oxlint-plugin-slimdeer --review --flagged --format ${format}, and run the command the page gives`);
+  if (fromLint && format) return fail(`--flagged --format would write a new file for every image the lint flagged, and each one needs a change in the code: review them first with ${runner()} --review --flagged --format ${format}, and run the command the page gives`);
   if (json) return fail("--json requires --check");
   if (Object.keys(checkOptions).length) return fail("--min-saved-bytes, --min-saved-percent, --exclude and --cache-dir require --check or --review");
   if (fromLint && (inputs.length || output !== undefined)) return fail("--flagged takes no images and no -o");
@@ -348,7 +348,7 @@ function folder(path) {
 
 /** A mistake in the arguments: said in one line, which the usage would scroll away. */
 function fail(message) {
-  console.error(`oxlint-plugin-slimdeer: ${printable(message)}\nRun npx oxlint-plugin-slimdeer --help to see every option.`);
+  console.error(`oxlint-plugin-slimdeer: ${printable(message)}\nRun ${runner()} --help to see every option.`);
   return 2;
 }
 

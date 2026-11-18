@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2 (2026-11-18)
+
+- When Vite+ runs the lint or the command (`vp lint`, `vp exec`), the commands they print start with `vp exec` in place of `npx`: the warning's, the summary's, `--check`'s and the review page's. A new Vite+ app pins its package manager, and npm then refuses to run `npx` in it (`EBADDEVENGINES`), so the commands 0.6.1 printed failed there.
+- The README's "Quick start with Vite+" installs with `vp install -D oxlint-plugin-slimdeer` and lints with `vp lint`: its `npm install` line failed in a new Vite+ app for the same reason.
+
+[Release notes](docs/releases/0.6.2.md)
+
 ## 0.6.1 (2026-11-13)
 
 - The package description fits npm's 250 characters; npm cut 0.6.0's in the middle of a sentence.

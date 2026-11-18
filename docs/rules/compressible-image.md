@@ -370,6 +370,8 @@ Run the command from the warning:
 npx oxlint-plugin-slimdeer public/hero.png
 ```
 
+When Vite+ runs the lint or the command (`vp lint`, `vp exec`), the warning's command and every other command they print start with `vp exec` in place of `npx`, as in `vp exec oxlint-plugin-slimdeer public/hero.png`: a new Vite+ app pins its package manager, and npm can then refuse to run `npx` in it (`EBADDEVENGINES`).
+
 It writes slimdeer's smaller file over the image, and marks it so this rule doesn't flag it again. The file keeps its name and format, so no code changes. slimdeer is lossy, so commit first. To see the result before you shrink anything, lint, then run [`--review --flagged`](#review-images-before-and-after): it shows the images the lint flagged, so images the rule's `exclude` option or a disable comment leaves out stay out. Plain `--review` shows every image `--check` would list and, like `--check`, reads no linter configuration, so pass `--exclude` for the images you keep. For one image, `-o` writes the result as a new file instead, to compare with the original:
 
 ```

@@ -11,7 +11,7 @@ import { cacheDir, fileKey, read, reportable } from "./cache.js";
 import { notice, pending } from "./compat.js";
 import { appendJobSummary, block, capital, code, inCheckout, table } from "./markdown.js";
 import { physical, projectFiles, projectImages } from "./scan.js";
-import { count, LEGEND, pathFrom, printable, quote, shrinkCommand, size, smaller } from "./text.js";
+import { count, LEGEND, pathFrom, printable, quote, runner, shrinkCommand, size, smaller } from "./text.js";
 
 // Rows shown per table; the rest are counted, and --flagged still takes them all.
 const ROWS = 10;
@@ -23,7 +23,7 @@ const REPORT_UNNAMED_ROWS = 50;
 const NOWHERE = "nothing names it";
 // The command that shows the flagged images before and after on one page (review.js), from the list
 // this lint leaves, as --flagged shrinks them.
-const REVIEW_FLAGGED = { text: "npx oxlint-plugin-slimdeer --review --flagged", shell: "" };
+const REVIEW_FLAGGED = { text: `${runner()} --review --flagged`, shell: "" };
 // How wide a terminal draws a character: East Asian wide ones and emoji take two columns, and
 // combining marks (the accent of an NFD é) and the vowels and finals of a decomposed Hangul syllable
 // none, as in Markus Kuhn's wcwidth.
@@ -319,7 +319,7 @@ export function summarize(cwd = process.cwd()) {
   }
   if (images.length || unnamed.length) lines.push(`slimdeer: ${LEGEND}`);
   if (images.length) {
-    says.shrink = { say: `to shrink the ${images.length === 1 ? "flagged image" : `${images.length} flagged images`} in place (lossy, so commit first)`, command: { text: "npx oxlint-plugin-slimdeer --flagged", shell: "" } };
+    says.shrink = { say: `to shrink the ${images.length === 1 ? "flagged image" : `${images.length} flagged images`} in place (lossy, so commit first)`, command: { text: `${runner()} --flagged`, shell: "" } };
     for (const { say, command } of [preview(cwd, images), says.shrink]) lines.push(`slimdeer: ${say}, run${command.shell}: ${command.text}`);
   }
   if (unnamed.length) {

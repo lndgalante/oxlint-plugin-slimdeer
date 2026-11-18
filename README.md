@@ -121,7 +121,7 @@ export default defineConfig({
 });
 ```
 
-Then run `vp lint`. A new Vite+ app pins its package manager, so `npm` and `npx` can refuse to run in it (`EBADDEVENGINES`). There, run the commands the lint and the review page give with `vp exec` in place of `npx`, as in `vp exec oxlint-plugin-slimdeer --review --flagged`.
+Then run `vp lint`. A new Vite+ app pins its package manager, so `npm` and `npx` can refuse to run in it (`EBADDEVENGINES`). So when Vite+ runs the lint or the command, the commands they print start with `vp exec` in place of `npx`, as in `vp exec oxlint-plugin-slimdeer --review --flagged`. Run the `npx oxlint-plugin-slimdeer` commands on this page the same way.
 
 ## What a lint shows
 
