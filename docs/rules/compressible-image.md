@@ -19,6 +19,8 @@ const icons = { star: "/icons/star.png" }; // ⚠ any string that is an image's 
 export const Photo = () => <img src="/my%20photo.png" />; // ⚠ public/my photo.png, read as a browser reads it
 ```
 
+In `srcSet="/spring,sale.jpg 1x, /spring,sale@2x.jpg 2x"`, each comma inside a filename belongs to its URL. The same applies to remote URLs, so `https://cdn.example.com/assets,/photo.jpg` gives no warning for a local `/photo.jpg`.
+
 Not flagged:
 
 ```jsx
@@ -45,7 +47,7 @@ The warning says how close to the original the smaller file would look, from its
   app/page.jsx:4:21: photo.jpg could be 64% smaller (235 kB → 85 kB) and look close, with differences you might spot side by side (quality 76/100). Here next/image re-encodes it for visitors, so shrinking it saves repository and build size. Run: npx oxlint-plugin-slimdeer public/photo.jpg [Warning/slimdeer(compressible-image)]
   ```
 
-  The note shows when every mention of the image in the file is a string `src` of the default import of `next/image`, `next/legacy/image` or `next/future/image`, or an imported image used only in such `src` props. It doesn't show when the element has `unoptimized` (other than `unoptimized={false}`), a `loader` prop or spread props, when the image is used elsewhere in the file, when the nearest `next.config.{js,mjs,cjs,ts,mts}` mentions `unoptimized` or `loaderFile`, or for an animated PNG, which Next.js serves as it is. The note speaks for that file only, and changes nothing else: the image is still reported, summed and shrunk by `--flagged` (see [When not to use it](#when-not-to-use-it)).
+  The note shows when every mention of the image in the file is a string `src` of the default import of `next/image`, `next/legacy/image` or `next/future/image`, or an imported image used only in such `src` props. A local component or parameter that shadows the import receives the ordinary image warning. The note doesn't show when the element has `unoptimized` (other than `unoptimized={false}`), a `loader` prop or spread props, when the image is used elsewhere in the file, when the nearest `next.config.{js,mjs,cjs,ts,mts}` mentions `unoptimized` or `loaderFile`, or for an animated PNG, which Next.js serves as it is. The note speaks for that file only, and changes nothing else: the image is still reported, summed and shrunk by `--flagged` (see [When not to use it](#when-not-to-use-it)).
 - **React Native and Expo.** In a project that depends on `react-native` or `expo`, a reference to `logo.png` also names `logo@2x.png`, `logo@3x.png`, `logo@1.5x.png`, `logo.ios.png`, `logo.android.png`, `logo.native.png`, `logo.web.png` and combinations like `logo@2x.ios.png` in the same folder, even when only the variants exist. Each one is warned at the same string and flagged. Names must match in letter case, and `require("./logo@2x.png")` names only that file.
 - **Gatsby.** In a project that depends on `gatsby`, root paths like `/hero.png` are looked up in `static/`, and `public/`, Gatsby's build output, is left out of warnings, the project scan, the summary and `--flagged`, unless `settings.slimdeer.publicDirs` includes `"public"`. `--check` leaves it out too (see [below](#check-images-without-changing-them)).
 - **Workspaces like Nx.** A root path like `/logo.png` is looked up in the `public/` and `static/` folders next to the linted file and in each folder above it, nearest first, so each app finds its own `public/` (see [Settings](#settings)).
@@ -420,6 +422,8 @@ oxlint-plugin-slimdeer: no list of flagged images here: lint in this folder firs
 src/assets/crystal-ball.png: changed since the last lint here; left as is (lint again to check it)
 ```
 
+Older flagged lists can lack the content key that identifies the bytes the lint measured. For those lists, shrinking checks for changes since the command started. Run a fresh lint to record the keys.
+
 An image the command itself wrote since the lint says `already shrunk by this command; left as is` instead. Several images run in parallel, one engine per core, 8 at most. Each image is shrunk once, however it's spelled: `Logo.png` and `logo.png` are one image on macOS and Windows. An image that changes while it is being compressed is left as it is, and so is a read-only one:
 
 ```
@@ -466,6 +470,8 @@ npx oxlint-plugin-slimdeer public/photo.jpg -o photo.avif  # write the copy you 
 oxlint-plugin-slimdeer: public/hero.png and public/hero.jpg would both be written as public/hero.webp: convert one of them with -o
 Run npx oxlint-plugin-slimdeer --help to see every option.
 ```
+
+With `--check --format` or `--review --format`, only copies that clear both savings thresholds and still need writing can conflict. Each conflicting source appears in the errors (`errors[]` in JSON). The commands and savings totals cover the other copies, and the run exits 2. To compare either source on its own, pass its path, for example `npx oxlint-plugin-slimdeer --review public/hero.jpg --format webp`. To write both copies, give one a distinct output path with `-o`.
 
 `--flagged --format` is refused: each copy needs its own change in the code, which the review page lets you choose.
 
@@ -589,7 +595,7 @@ slimdeer: to write them as WebP next to the originals, which stay, run: npx oxli
 - The checked line counts an image as measured when this run measured its shrink or its copy, and as cached when it read both from the cache, including a result that another run measured while this one waited for it. Above, the shrinks came from the plain `--check` and the copies were new; a second run reads both and says `0 measured, 5 cached`.
 - An image whose copy is there already isn't listed, so a project that keeps both files passes: `slimdeer: public/hero.png already has a WebP file next to it, which --format never replaces, so it isn't listed`. When every image that would be smaller has its copy, the check ends `slimdeer: as WebP, every image that would be smaller already has its WebP file. Images unchanged.` and exits `0`.
 - The images it doesn't list get a line for each reason: copies that save too little beyond the shrink (above), images [left out](#images-left-out), images the quality floor turned down (`slimdeer: public/fade.png isn't listed: shrunk in place it doesn't reach quality 70, so there is no quality to match; to choose one, run: npx oxlint-plugin-slimdeer --check public/fade.png --target 80 --format webp`), and at a `--target`, images no copy reaches it for (`slimdeer: public/photo.jpg isn't listed: as WebP, no file reaches --target 98 (the best reaches quality 92/100)`). When nothing is listed and an image was left out, turned down or short of the target, the check ends `slimdeer: as WebP, no image here is listed. Images unchanged.`
-- The exit codes are `--check`'s: `0` when no copy is listed, `1` when one is, `2` when an image couldn't be checked.
+- The check exits `2` if an image could not be checked or qualifying copies share an output path. Otherwise it exits `1` when any copy is listed and `0` when none is.
 - In GitHub Actions, the job summary is headed `slimdeer --check --format webp`, and its table gives each copy's size next to the shrink's: `| Image | Now | As WebP | Saves | Quality | Shrunk as PNG or JPEG |`.
 
 ### Its JSON
@@ -1005,7 +1011,9 @@ In ESLint the option goes in the same place: `rules: { "slimdeer/compressible-im
 
 For one reference, `// oxlint-disable-next-line slimdeer/compressible-image` (in JSX, `{/* oxlint-disable-next-line slimdeer/compressible-image */}`), or `eslint-disable-next-line` in ESLint. A `-next-line` comment can't go inside a template, so for a `url()` in a CSS-in-JS template, put the statement between `/* oxlint-disable slimdeer/compressible-image */` and `/* oxlint-enable slimdeer/compressible-image */` (or the `eslint-` forms). From the next lint on, an image whose warning is turned off this way stays out of the summary and out of `--flagged`.
 
-With ESLint's `--no-inline-config`, those references produce diagnostics again, but the summary and `--flagged` still leave them out. Use the command in the individual warning in that mode.
+Block directives take effect at the comment's position. An image reference after `/* eslint-enable slimdeer/compressible-image */` on the same line can warn and appear in `--flagged`. A reference before a block disable on the same line can too.
+
+With ESLint's `--no-inline-config`, references covered by disable comments produce diagnostics again, but the summary and `--flagged` still leave them out. Use the command in the individual warning in that mode.
 
 With ESLint 9.24+ and the rule at `"error"`, you can suppress the heavy images you already have instead: run `npx eslint --suppress-rule slimdeer/compressible-image` once and commit `eslint-suppressions.json`. The rule's summary and `--flagged` still include suppressed images, so shrink a new image with the command in its warning. After shrinking a suppressed one, run `npx eslint --prune-suppressions`.
 

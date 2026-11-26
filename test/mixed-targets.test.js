@@ -54,13 +54,20 @@ for (const [name, lint] of [["oxlint", oxlintSummary], ["ESLint", eslintSummary]
     const { dir, file } = mixed({ entry: "hit" });
     writeFileSync(join(dir, "src/strict1.js"), '// eslint-disable-next-line slimdeer/compressible-image\nexport const image = "./assets/crystal-ball.png";');
     assert.doesNotMatch(lint(dir, "src"), /left 1 shared image out of --flagged/);
-    assert.deepEqual(readFlagged(dir), [{ file: realpathSync(file), target: 70 }]);
+    assert.deepEqual(readFlagged(dir), [{ file: realpathSync(file), target: 70, key: key(readFileSync(file), 70) }]);
+  });
+
+  test(`${name}: a stricter reference after an inline enable protects --flagged`, () => {
+    const { dir } = mixed();
+    writeFileSync(join(dir, "src/strict1.js"), '/* eslint-disable slimdeer/compressible-image */\n/* eslint-enable slimdeer/compressible-image */ export const image = "./assets/crystal-ball.png";');
+    assert.match(lint(dir, "src"), /left 1 shared image out of --flagged/);
+    assert.deepEqual(readFlagged(dir), []);
   });
 
   test(`${name}: reported fixed targets select the strictest, but automatic/fixed mixtures need review`, () => {
     const fixed = mixed({ strict: 90, entry: "hit" });
     lint(fixed.dir, "src");
-    assert.deepEqual(readFlagged(fixed.dir), [{ file: realpathSync(fixed.file), target: 90 }]);
+    assert.deepEqual(readFlagged(fixed.dir), [{ file: realpathSync(fixed.file), target: 90, key: key(readFileSync(fixed.file), 90) }]);
     const automatic = mixed({ strict: "auto", entry: "hit" });
     assert.match(lint(automatic.dir, "src"), /left 1 shared image out of --flagged/);
     assert.deepEqual(readFlagged(automatic.dir), []);

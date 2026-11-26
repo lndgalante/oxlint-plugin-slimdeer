@@ -114,7 +114,7 @@ export function flaggedList(cwd) {
 }
 
 /**
- * The images the last lint run from `cwd` flagged, as [{ file, target, cacheDir, changed }] with
+ * The images the last lint run from `cwd` flagged, as [{ file, target, key, cacheDir, changed }] with
  * absolute paths (`cacheDir` only when the lint measured into another folder than the image's own
  * package's local one: its settings name one, or another package's code names the image; `changed`
  * only when the image changed since); null if no lint here left a usable list.
@@ -141,6 +141,7 @@ export function readFlagged(cwd) {
     return list.images.map(({ file, target, key, cacheDir }) => ({
       file: resolve(base, file),
       ...(target === undefined ? {} : { target }),
+      ...(key === undefined ? {} : { key }),
       ...(cacheDir === undefined ? {} : { cacheDir: resolve(base, cacheDir) }),
       // The lint flagged the bytes it measured. Others there since (a branch switch, a new export,
       // another tool's pass) may be bytes it would leave alone: excluded, kept, or saving too little.

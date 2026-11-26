@@ -8,7 +8,7 @@ import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { peakOf, pool } from "./batch.js";
 import { cacheDir, convertKey, key } from "./cache.js";
-import { cautionsOf, listing, notes, print, saving } from "./check.js";
+import { cautionsOf, checkCopyNames, listing, notes, print, saving } from "./check.js";
 import { measureAll, shortened } from "./measure.js";
 import { cautions, FORMATS } from "./convert.js";
 import { dimensions, kind, pngChunk } from "./images.js";
@@ -25,7 +25,7 @@ const SETTLE = 2000;
 
 /**
  * Measures what --check would (cached results are reused), or with `flagged` ([{ file, target,
- * cacheDir, changed }]) the images the last lint here flagged, each at its own target, from the
+ * cacheDir, changed, lint }]) the images the last lint here flagged, each at its own target, from the
  * cache folder the lint measured it into; writes each listed image's preview and a page comparing
  * them into the review folder of the project the command runs in, and says where it is. With `format`
  * ("webp", "avif"), each preview is the image's copy in that format, as the command writes it next to
@@ -39,9 +39,8 @@ export async function review(inputs, { cwd = process.cwd(), target, minSavedByte
   const again = `--review${flagged ? " --flagged" : ""}${format ? ` --format ${format}` : ""}`;
   // the local cache, never a --cache-dir that may be committed
   const folder = join(cacheDir(projectRoot(cwd, cwd)), "review");
-  // measuring writes each compressed image it makes into the folder, as its preview: it has to be
-  // there, and not a link. Without a format, a folder that can't be made yet (say node_modules is
-  // read-only) still lets measuring report why the cache failed.
+  // Measuring saves previews here. If node_modules is read-only, a same-format review can still
+  // run the check and report why the cache failed.
   let previewDir = folder;
   if (format) prepare(folder, cwd, again);
   else {
@@ -56,8 +55,9 @@ export async function review(inputs, { cwd = process.cwd(), target, minSavedByte
   // an image changed since the lint isn't the one it flagged (summary.js): neither measured nor shown
   const changed = (flagged ?? []).filter((image) => image.changed).map(({ file }) => ({ file, path: pathFrom(cwd, file), message: "changed since the last lint here; lint again to check it" }));
   const lists = flagged ? await measureFlagged(flagged.filter((image) => !image.changed), options) : [{ inputs, settings: options, result: await measureAll(inputs, options) }];
-  // with a format, the images whose copy's place something takes already are done (check.js listing())
-  const all = (part) => lists.flatMap(({ result }) => listing(result)[part] ?? []);
+  if (format) checkCopyNames(lists.map(({ result }) => result));
+  for (const list of lists) list.result = listing(list.result);
+  const all = (part) => lists.flatMap(({ result }) => result[part] ?? []);
   // each image with the target it was measured at, for the page
   const each = (part) => lists.flatMap(({ settings, result }) => (result[part] ?? []).map((image) => ({ ...image, target: settings.target })));
   const result = { format, rows: all("rows"), declined: all("declined"), missed: each("missed"), notWorthIt: each("notWorthIt"), leftOut: all("leftOut"), existing: all("existing"), errors: [...changed, ...all("errors")] };
@@ -142,6 +142,7 @@ export async function review(inputs, { cwd = process.cwd(), target, minSavedByte
  * if it beats that shrink by --review's own thresholds, as without --flagged.
  */
 async function measureFlagged(flagged, options) {
+  const expected = new Map(flagged.map(({ file, lint }) => [file, lint]));
   const groups = new Map(); // [target, cache folder] -> its images
   for (const { file, target, cacheDir } of flagged) {
     const group = JSON.stringify([target, cacheDir]);
@@ -150,7 +151,7 @@ async function measureFlagged(flagged, options) {
   const lists = [];
   const thresholds = options.format ? {} : { minSavedBytes: 0, minSavedPercent: 0 };
   for (const { target, cacheDir, inputs } of groups.values()) {
-    const result = await measureAll(inputs, { ...options, target, cacheDir, ...thresholds });
+    const result = await measureAll(inputs, { ...options, target, cacheDir, expected, ...thresholds });
     // --check's notes for them, with the --cache-dir given, if any, in the commands they give
     lists.push({ inputs, settings: { cwd: options.cwd, target, cacheDir: options.cacheDir }, result });
   }
@@ -256,15 +257,16 @@ async function previews(rows, folder, cwd, again, format, error) {
       const { target } = row;
       const k = format ? convertKey(bytes, row.equal, format) : key(bytes, target);
       const name = `${k}${format ? FORMATS[format].extension : type === "jpeg" ? ".jpg" : ".png"}`;
-      // measuring named the copy by the bytes it read
-      if (format && join(folder, name) !== row.preview) throw new Error(`changed while reviewing; run ${again} again`);
+      if ((row.key && row.key !== k) || (format && join(folder, name) !== row.preview)) throw new Error(`changed while reviewing; run ${again} again`);
       if (!cards.has(name)) {
         const [width, height] = dimensions(bytes, type);
         // a copy listed reached its target
         const { original, compressed, outcome = "hit", score, sameFormat, base } = row;
         const card = { paths: [], files: [], rows: [], before: href(folder, row.file), after: name, width, height, alpha: transparent(bytes, type), original, compressed, outcome, score, target, type, sameFormat, base, total: { original: 0, compressed: 0 } };
         cards.set(name, card);
-        const message = format ? { file: row.file, target: row.equal, format, out: row.preview } : { file: row.file, target, out: join(folder, name) };
+        const message = format
+          ? { file: row.file, target: row.equal, format, out: row.preview }
+          : { file: row.file, target, out: join(folder, name), lint: row.key && { key: row.key, target } };
         jobs.set(name, { k, card, size: bytes.length, peak: peakOf(bytes, format), message });
       }
       const card = cards.get(name);
@@ -306,6 +308,7 @@ async function previews(rows, folder, cwd, again, format, error) {
         // a copy's measurement says its size, and saves only a copy that reaches its target (worker.js)
         const written = format ? reply.outcome === "hit" && reply.compressed : reply.written;
         if (reply.error) fail(job, reply.error);
+        else if (format && reply.input !== job.k) fail(job, `changed while reviewing; run ${again} again`);
         // slimdeer left the image as it is, and the "preview" is a copy of it; or no copy reached the target
         else if (!written) fail(job, `no preview: ${format ? `as ${FORMATS[format].name}, no file reaches quality ${Math.round(job.message.target)}/100 now; please report this at ${ISSUES}` : reply.text}`);
         // the page shows what was measured, so a preview of another size can't go on it

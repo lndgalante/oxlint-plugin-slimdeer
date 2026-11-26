@@ -33,7 +33,7 @@ for (const [name, lint, summary] of [["oxlint", oxlint, oxlintSummary], ["ESLint
     const dir = project({ images: [ball, photo], files: { "src/app.js": source }, options: { exclude: ["public/**"] } });
     assert.deepEqual(names(lint(dir, "src/app.js")), ["crystal-ball.png"]);
     assert.equal(cached(dir, photo), null);
-    assert.deepEqual(readFlagged(dir), [{ file: realpathSync(join(dir, ball)) }]);
+    assert.deepEqual(readFlagged(dir).map(({ file }) => file), [realpathSync(join(dir, ball))]);
 
     const bytes = readFileSync(join(dir, photo));
     write(cacheDir(dir), key(bytes), { original: bytes.length, compressed: 1000, outcome: "hit", score: 90 });

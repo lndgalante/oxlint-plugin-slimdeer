@@ -320,6 +320,63 @@ test("copies that don't save enough beyond their shrink name their sizes, and th
   ]);
 });
 
+test("copies that share a destination stay out of check commands and totals", () => {
+  for (const format of ["webp", "avif"]) {
+    const dir = project({ images: [] });
+    const options = { format, copy: { compressed: 3000, score: 90 } };
+    measured(dir, "poster.png", options);
+    measured(dir, "poster.jpg", { ...options, bytes: photo });
+    measured(dir, "other/poster.png", options);
+    const args = ["--format", format];
+    const json = check(dir, ...args, "--json");
+    assert.equal(json.status, 2, json.stderr);
+    const report = JSON.parse(json.stdout);
+    assert.deepEqual(report.images.map(({ file }) => file), ["other/poster.png"]);
+    assert.equal(report.totals.images, 1);
+    assert.deepEqual(report.errors.map(({ file }) => file).sort(), ["poster.jpg", "poster.png"]);
+    for (const { file, message } of report.errors) {
+      assert.ok(message.includes(`poster.${format}`));
+      assert.ok(json.stderr.includes(`${file}: ${message}`));
+    }
+    const lines = check(dir, ...args);
+    assert.equal(lines.status, 2, lines.stderr);
+    assert.ok(lines.stdout.trimEnd().endsWith(`npx oxlint-plugin-slimdeer other/poster.png --format ${format}`));
+    const one = check(dir, ...args, "--json", "poster.jpg");
+    assert.equal(one.status, 1, one.stderr);
+    assert.deepEqual(JSON.parse(one.stdout).images.map(({ file }) => file), ["poster.jpg"]);
+  }
+});
+
+test("copy destinations follow the filesystem's treatment of Unicode names", () => {
+  const dir = project({ images: [] });
+  const jpg = "café.jpg";
+  const png = "café.png".normalize("NFD");
+  const options = { copy: { compressed: 3000, score: 90 } };
+  measured(dir, jpg, { ...options, bytes: photo });
+  measured(dir, png, options);
+  const aliases = existsSync(join(dir, png.normalize()));
+  if (!aliases) measured(dir, png.normalize(), options);
+  const checked = check(dir, "--format", "webp", "--json", png, jpg);
+  const report = JSON.parse(checked.stdout);
+  assert.equal(checked.status, aliases ? 2 : 1, checked.stderr);
+  if (aliases) {
+    assert.deepEqual(report.errors.map(({ file }) => file).sort(), [png, jpg].sort());
+    assert.deepEqual(report.images, []);
+    const direct = run(dir, ["--format", "webp", png, jpg]);
+    assert.equal(direct.status, 2, direct.stderr);
+    assert.ok(direct.stderr.includes(`${png} and ${jpg} would both be written as ${png.replace(".png", ".webp")}`));
+  } else {
+    assert.deepEqual(report.errors, []);
+    assert.deepEqual(report.images.map(({ file }) => file).sort(), [png, jpg].sort());
+  }
+  const missing = png.replace(".png", ".apng");
+  for (const paths of [[png, missing], [missing, png]]) {
+    const direct = run(dir, ["--format", "webp", ...paths]);
+    assert.equal(direct.status, 2, direct.stderr);
+    assert.ok(direct.stderr.includes("would both be written as"));
+  }
+});
+
 test("a copy that can't reach its target is named with its best, set apart from the target even when they round alike", () => {
   const dir = project({ images: [] });
   // its own shrink reached 87.3, the copy only 87.1: as whole numbers, both read 87

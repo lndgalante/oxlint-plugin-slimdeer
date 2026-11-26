@@ -113,6 +113,7 @@ async function measure(requests, progress, onStart) {
   const counts = { computed: 0, cached: 0, skipped: 0, failed: 0, declined: 0 };
   for (const request of requests) {
     const { dir, failures = dir, target, previewDir } = request;
+    const preview = previewDir === undefined ? undefined : { dir: previewDir, ...thresholds(request) };
     for (const file of new Set(request.files)) {
       let bytes;
       try {
@@ -142,7 +143,7 @@ async function measure(requests, progress, onStart) {
         continue;
       }
       queued.add(id);
-      todo.push({ request, file, k, size: bytes.length, peak: peakOf(bytes), message: { file, target, ...(previewDir !== undefined && { previewDir }) } });
+      todo.push({ request, file, k, size: bytes.length, peak: peakOf(bytes), message: { file, target, preview } });
     }
   }
   if (todo.length) onStart(todo.length, [...new Set(todo.map(({ request }) => request.dir))]);

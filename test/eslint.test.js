@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { cacheDir, key, write } from "../src/cache.js";
 import { flaggedList, readFlagged } from "../src/summary.js";
 import { eslint, eslintSummary, handled, names, oxlint, plugin, slimdeer, project } from "./helpers.js";
 
@@ -54,6 +55,61 @@ test("ESLint owns suppression so used disable comments are not reported as unuse
   assert.match(unsuppressed.found[0].message, /quality \d+\/100/);
   // the warning shows, but the comment still says to keep the image, so --flagged leaves it alone
   assert.deepEqual(readFlagged(dir) ?? [], []);
+});
+
+test("block directives keep exactly the enabled references on their boundary lines in --flagged", () => {
+  const bytes = readFileSync(join(plugin, "example/src/assets/crystal-ball.png"));
+  const files = Object.fromEntries(["before", "inside", "repeat", "after"].map((name) => [`public/${name}.png`, bytes]));
+  const off = "/* eslint-disable slimdeer/compressible-image */";
+  const on = "/* eslint-enable slimdeer/compressible-image */";
+  files["src/app.js"] = [
+    `export const photos = ["/before.png", ${off} "/inside.png", "/repeat.png", ${on} "/repeat.png"];`,
+    off,
+    `export const more = ["/inside.png", ${on} "/after.png"];`,
+  ].join("\n");
+  const dir = project({ files, images: [], options: { measure: "never", scan: "referenced" } });
+  write(cacheDir(dir), key(bytes), { original: bytes.length, compressed: 10000, outcome: "hit", score: 85 });
+  for (const lint of [oxlint, eslint]) {
+    const expected = ["after.png", "before.png", "repeat.png"];
+    assert.deepEqual(names(lint(dir, "src")), expected, lint.name);
+    assert.deepEqual(readFlagged(dir).map(({ file }) => basename(file)).sort(), expected, lint.name);
+  }
+});
+
+test("repeated references reuse a warm result for one lint of a file", () => {
+  const dir = project({ images: ["public/photo.jpg"], options: { scan: "referenced" } });
+  const bytes = readFileSync(join(dir, "public/photo.jpg"));
+  const k = key(bytes);
+  write(cacheDir(dir), k, { original: bytes.length, compressed: 10000, outcome: "hit", score: 85 });
+  const script = `import { ESLint } from ${JSON.stringify(pathToFileURL(join(plugin, "node_modules", "eslint", "lib", "api.js")).href)};
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const lint = new ESLint();
+const read = fs.readFileSync;
+let reads = 0;
+fs.readFileSync = (file, ...args) => {
+  if (typeof file === "string" && file.endsWith(${JSON.stringify(k + ".json")})) reads++;
+  return read(file, ...args);
+};
+syncBuiltinESMExports();
+async function check(count) {
+  reads = 0;
+  const [result] = await lint.lintText("export default [" + Array(count).fill('"/photo.jpg"').join(",") + "]");
+  return { reads, warnings: result.warningCount };
+}
+const one = await check(1);
+const many = await check(100);
+const entry = { original: ${bytes.length}, compressed: ${bytes.length}, outcome: "original", score: 100 };
+fs.writeFileSync(${JSON.stringify(join(cacheDir(dir), k + ".json"))}, JSON.stringify(entry));
+console.log(JSON.stringify([one, many, await check(1)]));
+`;
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: dir, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  const [one, many, refreshed] = JSON.parse(run.stdout);
+  assert.ok(one.reads > 0);
+  assert.equal(one.warnings, 1);
+  assert.deepEqual(many, one);
+  assert.equal(refreshed.warnings, 0);
 });
 
 test("lintText without a filename resolves images from ESLint's cwd", () => {

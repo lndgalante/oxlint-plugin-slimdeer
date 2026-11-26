@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { cacheDir, key, read, write } from "../src/cache.js";
+import { measureAll } from "../src/measure.js";
 import { opener } from "../src/review.js";
 import { page } from "../src/review-page.js";
 import { flaggedList } from "../src/summary.js";
@@ -153,6 +154,25 @@ test("review writes each preview and a page into the project's cache, and change
   assert.equal(spaced(tally(data, [true, false])), "1 of 3 images ticked: could save 150 kB (235 kB → 85 kB, 64% smaller)");
   // nothing but the page's own folder and file URLs: no network
   assert.doesNotMatch(html, /(?:src|href)="(?:https?:)?\/\//);
+});
+
+test("cold review writes previews only for images that clear both savings thresholds", async () => {
+  const diagram = "src/assets/diagram.png";
+  const images = [BALL, PHOTO, diagram];
+  const cwd = project({ images });
+  const previewDir = join(cacheDir(cwd), "review");
+  mkdirSync(previewDir, { recursive: true });
+
+  // The ball saves too few bytes, the photo too small a percentage.
+  const result = await measureAll(images, { cwd, previewDir, minSavedBytes: 30_000, minSavedPercent: 65 });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.counts.measured, 3);
+  assert.deepEqual(result.rows.map(({ path }) => path), [diagram]);
+  assert.deepEqual(readdirSync(previewDir), [`${key(readFileSync(join(cwd, diagram)))}.png`]);
+
+  const warm = await measureAll(images, { cwd });
+  assert.equal(warm.counts.cached, 3);
+  assert.deepEqual(warm.rows.map(({ path }) => path), images);
 });
 
 test("a second review reuses the previews still wanted, writes the ones that went wrong, and removes the rest", () => {

@@ -97,6 +97,31 @@ test("prose starting with an image path isn't mistaken for a srcSet", () => {
   assert.deepEqual(names(eslint(dir, "src")), ["cdn-sibling.png", "hi.png", "ok.png", "wide.png"]);
 });
 
+test("commas inside srcSet URLs stay with their own candidate", () => {
+  const lines = [
+    'export const remote = "https://cdn.example/assets,/never.png";',
+    'export const data = <img srcSet="data:image/png,/never.png 1x,/spring,sale.png 2x" />;',
+    'export const mixed = <img srcSet="//cdn.example/assets,/same.png 1x, /same.png 2x" />;',
+    'export const bare = <img srcSet="/first,small.png, /last.png" />;',
+    'export const escaped = "//cdn.example/assets,/again.png 1x,\\t/again.png 2x";',
+    'export const spelled = "//cdn.example/assets,/raw.png 1x, /r\\u0061w.png 2x";',
+  ];
+  const dir = project({ files: { "src/App.jsx": lines.join("\n") }, images: [] });
+  const paths = ["/spring,sale.png", "/same.png", "/first,small.png", "/last.png", "/again.png", "/raw.png"];
+  place(dir, ball, "public/never.png", ...paths.map((path) => `public${path}`));
+  const span = (line, path) => [line, lines[line - 1].lastIndexOf(path) + 1, path.length];
+  const expected = {
+    "spring,sale.png": span(2, paths[0]),
+    "same.png": span(3, paths[1]),
+    "first,small.png": span(4, paths[2]),
+    "last.png": span(4, paths[3]),
+    "again.png": span(5, paths[4]),
+    "raw.png": [6, lines[5].indexOf('"') + 1, lines[5].lastIndexOf('"') - lines[5].indexOf('"') + 1],
+  };
+  assert.deepEqual(oxlintSpans(oxlint(dir)), expected);
+  assert.deepEqual(eslintSpans(eslint(dir, "src")), expected);
+});
+
 test("a path that ends an earlier one in the same string is underlined where it's written, not in the earlier one", () => {
   const files = {
     "src/App.jsx": [
@@ -157,7 +182,7 @@ test("in a Gatsby project, /x.png is static/x.png, and the build output in publi
   const [found, ...rest] = oxlint(dir).found;
   assert.equal(rest.length, 0);
   assert.ok(found.message.endsWith("Run: npx oxlint-plugin-slimdeer static/logo.png"), found.message);
-  assert.deepEqual(readFlagged(dir), [{ file: realpathSync(join(dir, "static/logo.png")) }]);
+  assert.deepEqual(readFlagged(dir).map(({ file }) => file), [realpathSync(join(dir, "static/logo.png"))]);
   assert.equal(cached(dir, "public/static/d1f3/9a2b/hero.png"), null);
   assert.doesNotMatch(oxlintSummary(dir), /public\//);
 });
@@ -241,6 +266,38 @@ test("an image rendered through next/image says that Next.js re-encodes it, unle
   assert.deepEqual(noted(oxlint(dir)), []);
 });
 
+test("the next/image note follows the imported component through nested scopes", () => {
+  const lines = [
+    'import { default as Picture } from "next/image";',
+    'import local from "./local.png";',
+    'export const Page = () => <Picture src="/served.png" />;',
+    'export const Card = (Picture) => <Picture src={local} />;',
+    'export function Gallery() { const Picture = Other; return <Picture src="/other.png" />; }',
+  ];
+  const dir = project({ files: { "src/App.jsx": lines.join("\n") }, images: [] });
+  place(dir, ball, "public/served.png", "src/local.png", "public/other.png");
+  for (const result of [oxlint(dir), eslint(dir, "src")]) {
+    assert.deepEqual(names(result), ["local.png", "other.png", "served.png"]);
+    assert.deepEqual(result.found.filter((d) => d.message.includes(NOTE)).map((d) => d.message.split(" ")[0]), ["served.png"]);
+  }
+});
+
+test("only a value import of next/image renders a TSX element", () => {
+  const source = [
+    'import Picture from "next/image";',
+    'import type Image from "next/image";',
+    'import { type default as Other } from "next/image";',
+    'export function Page() { type Picture = string; return <Picture src="/served.png" />; }',
+    'export const Card = () => <Image src="/one.png" />;',
+    'export const Tile = () => <Other src="/two.png" />;',
+  ].join("\n");
+  const dir = project({ files: { "src/Page.tsx": source }, images: [] });
+  place(dir, ball, "public/served.png", "public/one.png", "public/two.png");
+  const result = oxlint(dir);
+  assert.deepEqual(names(result), ["one.png", "served.png", "two.png"]);
+  assert.deepEqual(result.found.filter((d) => d.message.includes(NOTE)).map((d) => d.message.split(" ")[0]), ["served.png"]);
+});
+
 test("an exclusion holds for an image code reaches through a symlinked folder", (t) => {
   const files = { "src/App.jsx": 'export const logo = "/brand/logo.png";\nexport const ball = "./assets/crystal-ball.png";\n' };
   const dir = project({ files, options: { exclude: ["design"] }, images: ["src/assets/crystal-ball.png"] });
@@ -254,7 +311,7 @@ test("an exclusion holds for an image code reaches through a symlinked folder", 
   }
   assert.deepEqual(names(oxlint(dir)), ["crystal-ball.png"]);
   assert.equal(cached(dir, "design/brand/logo.png"), null);
-  assert.deepEqual(readFlagged(dir), [{ file: realpathSync(join(dir, "src/assets/crystal-ball.png")) }]);
+  assert.deepEqual(readFlagged(dir).map(({ file }) => file), [realpathSync(join(dir, "src/assets/crystal-ball.png"))]);
 });
 
 test("an exclusion holds for an image code spells in another letter case", (t) => {
@@ -274,7 +331,7 @@ test("an exclusion written in another letter case than the folder holds where th
   assert.deepEqual(names(oxlint(dir)), ["crystal-ball.png"]);
   // neither the named image nor the one the project scan finds is measured, flagged or listed
   assert.equal(cached(dir, "public/Originals/brand.png"), null);
-  assert.deepEqual(readFlagged(dir), [{ file: realpathSync(join(dir, "src/assets/crystal-ball.png")) }]);
+  assert.deepEqual(readFlagged(dir).map(({ file }) => file), [realpathSync(join(dir, "src/assets/crystal-ball.png"))]);
   assert.doesNotMatch(oxlintSummary(dir), /Originals/);
 });
 

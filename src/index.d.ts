@@ -1,10 +1,16 @@
-/** Options of the `slimdeer/compressible-image` rule (docs/rules/compressible-image.md). */
+/**
+ * Options of the `slimdeer/compressible-image` rule (docs/rules/compressible-image.md).
+ * In srcSet strings, commas inside a URL belong to that URL, including in local filenames.
+ */
 export interface CompressibleImageOptions {
   /** Report only savings of at least this many bytes. Default 4096. */
   minSavedBytes?: number;
   /** ...and of at least this percent of the file. Default 10. */
   minSavedPercent?: number;
-  /** The SSIMULACRA2 score to keep, 0-100, or "auto" (about TinyPNG's quality). Default "auto". */
+  /**
+   * The SSIMULACRA2 score to keep, 0-100, or "auto" (about TinyPNG's quality). Default "auto".
+   * The flagged list identifies the measured bytes at this target even if the CLI overrides it.
+   */
   target?: "auto" | number;
   /** When to measure images not in the cache. Default "auto". */
   measure?: "auto" | "always" | "never";

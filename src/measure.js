@@ -34,9 +34,11 @@ const NOT_MEASURED = "not measured: ";
  * - counts: { checked, measured, cached, skipped, packages };
  * - builds: [{ path, images }], Gatsby build folders left out, and how many images they hold.
  * An error that running it again may clear names `again`, the run to repeat (--review's, say).
- * With `previewDir` (a folder the caller made, not a link), each image measured here that slimdeer
- * shrinks (without `format`, the marked shrink; with `format`, each copy that reaches its target) is
- * also written there, named by its cache key and extension.
+ * With `previewDir` (a folder the caller made, not a link), measuring saves each marked shrink that
+ * clears both thresholds there, named by its cache key and extension. With `format`, it saves each
+ * copy that reaches its target.
+ * For a flagged review, `expected` maps each file to the lint's { key, target } when its list has a key.
+ * The review may ask for another target, but must still read the bytes the lint flagged.
  *
  * With `format` ("webp", "avif"), each image is then measured as that format at its equal target
  * (convert.js), the results kept in its project's local cache folder alone. Resolves { format, rows, notWorthIt,
@@ -59,7 +61,7 @@ const NOT_MEASURED = "not measured: ";
  *   with the best score found.
  * slimdeer's own output without the mark (cache.js "output") is in none of them, as without `format`.
  */
-export async function measureAll(inputs, { cwd = process.cwd(), target, minSavedBytes = 4096, minSavedPercent = 10, exclude = [], cacheDir: customCacheDir, onError, again = "--check", format, previewDir } = {}) {
+export async function measureAll(inputs, { cwd = process.cwd(), target, minSavedBytes = 4096, minSavedPercent = 10, exclude = [], cacheDir: customCacheDir, onError, again = "--check", format, previewDir, expected } = {}) {
   cwd = resolve(cwd);
   const errors = [];
   const failed = new Set();
@@ -71,7 +73,7 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
     // before the measuring count starts, or after it's cleared: never on its line
     onError?.(item);
   };
-  const { files, builds } = collect(inputs, cwd, exclude, error);
+  const { files, builds } = collect(inputs, cwd, exclude, error, expected !== undefined);
   const counts = { checked: files.size, measured: 0, cached: 0, skipped: 0, packages: new Set([...files.values()].map(({ root }) => root)).size };
   const cached = new Set(); // the images counted as cached
   const groups = new Map(); // project root -> its cache folders and its images
@@ -80,12 +82,18 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
   for (const { file, root } of files.values()) {
     try {
       const bytes = readFileSync(file);
+      const lint = expected?.get(file);
+      const shrunk = marked(bytes);
+      if (lint && !shrunk && key(bytes, lint.target) !== lint.key) {
+        error(file, `changed while checking; run ${again} again`);
+        continue;
+      }
       // an image too small to save minSavedBytes, or already shrunk by the command, needs nothing more,
       // whatever slimdeer would make of it; a file that isn't a PNG or JPEG is an error at any size
-      if (kind(bytes) && (marked(bytes) || bytes.length < minSavedBytes)) {
+      if (shrunk || (bytes.length < minSavedBytes && kind(bytes))) {
         counts.skipped++;
         // converting the command's output would be a second lossy pass; an image too small goes unlisted anyway
-        if (format && marked(bytes) && bytes.length >= minSavedBytes) left.push({ file, path: pathFrom(cwd, file), ...leftOut(bytes, file, format, root) });
+        if (format && shrunk && bytes.length >= minSavedBytes) left.push({ file, path: pathFrom(cwd, file), ...leftOut(bytes, file, format, root) });
         continue;
       }
       const why = unsupported(bytes);
@@ -95,7 +103,7 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
       }
       const local = cacheDir(root);
       const dir = customCacheDir ? resolve(root, customCacheDir) : local;
-      const k = key(bytes, target);
+      const k = lint && target === lint.target ? lint.key : key(bytes, target);
       const entry = readFirst(k, dir, local);
       // a failure kept from an earlier run counts as the error it is, not also as cached
       if (entry && !entry.skipped) {
@@ -178,7 +186,7 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
           missed.push({ file, path, original, score: entry.score });
         }
         if (!reportable(entry, { minSavedBytes, minSavedPercent })) continue;
-        rows.push({ file, path, root, target, original: entry.original, compressed: entry.compressed, outcome: entry.outcome, score: entry.score });
+        rows.push({ file, path, root, target, original: entry.original, compressed: entry.compressed, outcome: entry.outcome, score: entry.score, ...(expected && { key: k }) });
       } catch (cause) {
         error(file, cause);
       }
@@ -334,7 +342,7 @@ async function batch(requests, fill, onStart, progress) {
  * package.json is a project of its own, with its own cache, as in the lint), and the images in
  * Gatsby build folders the walks left out.
  */
-function collect(inputs, cwd, exclude, error) {
+function collect(inputs, cwd, exclude, error, filesOnly) {
   const files = new Map();
   const built = new Map(); // physical path -> the Gatsby build folder it's in
   const add = (file, walked) => {
@@ -360,7 +368,8 @@ function collect(inputs, cwd, exclude, error) {
       const stat = statSync(path);
       const root = projectRoot(stat.isDirectory() ? path : dirname(path), cwd);
       if (off(exclude, path, root, cwd)) continue;
-      if (stat.isDirectory()) {
+      if (stat.isDirectory() && filesOnly) error(path, "a folder, not an image");
+      else if (stat.isDirectory()) {
         const options = { base: root, top: cwd, nested: true, onError: error };
         for (const file of projectImages(path, 0, exclude, options).sort()) add(file, path);
       } else if (stat.isFile()) add(path);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { Worker } from "node:worker_threads";
@@ -247,6 +247,14 @@ test("--flagged and --review --flagged leave alone an image changed since the li
   const again = slimdeer(dir, "--flagged");
   assert.equal(again.status, 0, again.stderr);
   assert.equal(again.stdout, `${ball}: already shrunk by this command; left as is\n`);
+  // A replacement folder can contain heavy images the lint never flagged.
+  rmSync(join(dir, ball));
+  mkdirSync(join(dir, ball));
+  writeFileSync(join(dir, ball, "child.png"), other);
+  const folder = slimdeer(dir, "--review", "--flagged");
+  assert.equal(folder.status, 2, folder.stdout);
+  assert.match(folder.stderr, /crystal-ball\.png: a folder, not an image/);
+  assert.equal(existsSync(join(cacheDir(dir), "review/index.html")), false);
 });
 
 test("a list from 0.5.0, which doesn't say where its lint ran, isn't used", () => {
@@ -274,7 +282,7 @@ test("corrupt flagged lists are rejected before the command reads image paths", 
   // with the key of the bytes the lint measured: an image gone since isn't called changed, as
   // shrinking it says it's gone
   writeFileSync(flaggedList(dir), JSON.stringify({ cwd: here, images: [{ file: "a.png", key: "0".repeat(64) }, { file: "b/c.png", target: 90, cacheDir: ".slimdeer" }] }));
-  assert.deepEqual(readFlagged(dir), [{ file: join(realpathSync(dir), "a.png") }, { file: resolve(realpathSync(dir), "b/c.png"), target: 90, cacheDir: join(realpathSync(dir), ".slimdeer") }]);
+  assert.deepEqual(readFlagged(dir), [{ file: join(realpathSync(dir), "a.png"), key: "0".repeat(64) }, { file: resolve(realpathSync(dir), "b/c.png"), target: 90, cacheDir: join(realpathSync(dir), ".slimdeer") }]);
 });
 
 test("shared images keep the strictest reported target regardless of file order", async (t) => {

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
 import { FLOOR, reportable } from "./cache.js";
 import { cautions, FORMATS, missText, sameText, SUGGESTED } from "./convert.js";
-import { listed } from "./copies.js";
+import { firstCopy, listed } from "./copies.js";
 import { LFS } from "./images.js";
 import { appendJobSummary, block, capital, code, inCheckout, prose, table } from "./markdown.js";
 import { measureAll, shortened } from "./measure.js";
@@ -37,7 +37,9 @@ export async function check(inputs, options = {}) {
   const onError = ({ path, message }) => console.error(printable(`${path}: ${shortened(message)}`));
   // an error that may clear on its own names the run to repeat, as typed
   const again = options.format ? `--check --format ${options.format}` : "--check";
-  return print(inputs, await measureAll(inputs, { ...settingsOf(options), onError, again }), options);
+  const result = await measureAll(inputs, { ...settingsOf(options), onError, again });
+  if (options.format) checkCopyNames([result], onError);
+  return print(inputs, result, options);
 }
 
 /**
@@ -129,6 +131,34 @@ export function listing(result) {
   // a result listed already has its `existing`
   if (!result.format || result.existing) return result;
   return { ...result, rows: result.rows.filter(({ outputExists }) => !outputExists), existing: result.rows.filter(({ outputExists }) => outputExists) };
+}
+
+/** A flagged review can measure several targets separately. All its copies still share a filesystem. */
+export function checkCopyNames(results, onError) {
+  const seen = new Map();
+  const conflicts = new Map();
+  for (const { rows } of results) {
+    for (const row of rows) {
+      if (row.outputExists) continue;
+      const first = firstCopy(seen, row.output, row.file, row);
+      if (first) {
+        conflicts.set(first, row);
+        conflicts.set(row, first);
+      }
+    }
+  }
+  if (conflicts.size === 0) return;
+  for (const result of results) {
+    result.rows = result.rows.filter((row) => {
+      const other = conflicts.get(row);
+      if (!other) return true;
+      const message = `${other.path} also writes ${basename(row.output)}. Review one image at a time or use -o to give a copy another name.`;
+      const error = { file: row.file, path: row.path, message };
+      result.errors.push(error);
+      onError?.(error);
+      return false;
+    });
+  }
 }
 
 /**

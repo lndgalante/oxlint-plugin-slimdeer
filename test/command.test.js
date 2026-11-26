@@ -7,9 +7,78 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { test } from "node:test";
 import { cacheDir } from "../src/cache.js";
-import { marked } from "../src/marker.js";
+import { mark, marked } from "../src/marker.js";
 import { save } from "../src/shrink.js";
-import { fade, handled, plugin, slimdeer, project } from "./helpers.js";
+import { flaggedList } from "../src/summary.js";
+import { fade, handled, oxlintSummary, plugin, slimdeer, project } from "./helpers.js";
+
+test("--flagged keeps the lint's key when an export lands after the list is checked", () => {
+  const file = "product.png";
+  const original = Buffer.concat([readFileSync(join(plugin, "example/src/assets/crystal-ball.png")), Buffer.from([0])]);
+  const replacement = readFileSync(join(plugin, "example/public/unused-fire.png"));
+  const dir = project({ images: [], files: { [file]: original, "app.js": 'export default "./product.png";' } });
+  oxlintSummary(dir);
+
+  // Publish the next export after the chosen read, as a design tool could do.
+  writeFileSync(join(dir, "export.cjs"), `const fs = require("node:fs");
+const image = fs.realpathSync("product.png");
+const read = fs.readFileSync;
+let left = Number(process.env.SWAP_AFTER);
+fs.readFileSync = function (path, ...args) {
+  const bytes = read(path, ...args);
+  if (path === image && --left === 0 && fs.existsSync("next.png")) fs.renameSync("next.png", image);
+  return bytes;
+};
+require("node:module").syncBuiltinESMExports();`);
+  const swap = (args, next, after = 1) => {
+    writeFileSync(join(dir, file), original);
+    writeFileSync(join(dir, "next.png"), next);
+    return spawnSync(process.execPath, ["--require", "./export.cjs", join(plugin, "bin/slimdeer.js"), ...args], { cwd: dir, env: { ...process.env, SWAP_AFTER: String(after) }, encoding: "utf8" });
+  };
+  for (const args of [["--flagged"], ["--review", "--flagged"]]) {
+    const run = swap([...args, "--target", "80"], replacement);
+    const review = args.includes("--review");
+    assert.equal(run.status, review ? 2 : 1, run.stdout + run.stderr);
+    assert.match(run.stderr, review ? /changed while checking; run --review --flagged again/ : /changed since the last lint here; left as is/);
+    assert.deepEqual(readFileSync(join(dir, file)), replacement);
+    assert.equal(existsSync(join(cacheDir(dir), "review/index.html")), false);
+    const done = mark(original);
+    const again = swap(args, done);
+    assert.equal(again.status, 0, again.stderr);
+    assert.deepEqual(readFileSync(join(dir, file)), done);
+  }
+  // A different last byte after IEND keeps the input and its compressed preview the same size.
+  // Replace it after measurement's final read, just before the review prepares its card.
+  const sameSize = Buffer.from(original);
+  sameSize[sameSize.length - 1] = 1;
+  const late = swap(["--review", "--flagged"], sameSize, 3);
+  assert.equal(late.status, 2, late.stdout + late.stderr);
+  assert.match(late.stderr, /changed while reviewing; run --review --flagged again/);
+  assert.equal(existsSync(join(cacheDir(dir), "review/index.html")), false);
+
+  // A cached conversion still needs a worker to write its preview. Swap while the job is queued.
+  writeFileSync(join(dir, file), original);
+  const check = slimdeer(dir, "--check", "--format", "webp", file);
+  assert.equal(check.status, 1, check.stdout + check.stderr);
+  const copy = swap(["--review", "--flagged", "--format", "webp"], sameSize, 4);
+  assert.equal(copy.status, 2, copy.stdout + copy.stderr);
+  assert.match(copy.stderr, /changed while reviewing; run --review --flagged --format webp again/);
+  assert.equal(existsSync(join(cacheDir(dir), "review/index.html")), false);
+
+  writeFileSync(join(dir, file), original);
+  const fresh = slimdeer(dir, "--flagged", "--target", "80");
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.equal(marked(readFileSync(join(dir, file))), true);
+
+  const list = JSON.parse(readFileSync(flaggedList(dir), "utf8"));
+  delete list.images[0].key;
+  writeFileSync(flaggedList(dir), JSON.stringify(list));
+  const legacy = swap(["--flagged"], replacement);
+  assert.equal(legacy.status, 1, legacy.stdout + legacy.stderr);
+  assert.deepEqual(readFileSync(join(dir, file)), replacement);
+  assert.equal(slimdeer(dir, "--flagged").status, 0);
+  assert.equal(marked(readFileSync(join(dir, file))), true);
+});
 
 test("makes several images smaller in place, and marks them", () => {
   const dir = project({ images: ["src/assets/crystal-ball.png", "public/photo.jpg"] });

@@ -31,7 +31,7 @@ same, the bytes don't, so commit first.
                 file is smaller than both. It never replaces a file and keeps the original:
                 code that names an image must change to use the new file. AVIF is slow
   --flagged     the images the last lint here flagged, each at the target it was measured at;
-                shared images with conflicting quality targets are left out
+                changed images and shared images with conflicting quality targets are left out
   --check       measure, changing no image: files and folders (default: this folder), with
                 the packages inside them; warms the lint's cache. With --format, it compares
                 each image as WebP or AVIF with its PNG or JPEG shrink at the same quality
@@ -60,6 +60,8 @@ or when an image or folder couldn't be checked. It reads no linter configuration
 --review exits 0 when it wrote the page or found nothing to review, and 2 on a mistake,
 when --flagged finds no list, or when an image or folder couldn't be checked or previewed.
 Like --check, it reads no linter configuration; with --flagged, it shows what the lint flagged.
+If qualifying copies share an output path, --check and --review report each conflict and exit 2.
+Review one image at a time or use -o to give a copy another name.
 With --format, the command exits 0 when each image was written or left out for a reason it
 names, 1 when one failed or another file was in the way, and 2 on a mistake. With an OUT
 ending in .webp or .avif, it exits 0 only when it wrote OUT.
@@ -174,7 +176,10 @@ async function main(args) {
       }
       // a --target given here wins over the lint's, as with --flagged, and so does a --cache-dir over
       // the folder the lint measured into
-      flagged = list.map(({ file, target: own, cacheDir, changed }) => ({ file, target: targeted ? target : own, cacheDir: checkOptions.cacheDir ?? cacheDir, changed }));
+      flagged = list.map(({ file, target: own, key, cacheDir, changed }) => ({
+        file, target: targeted ? target : own, cacheDir: checkOptions.cacheDir ?? cacheDir, changed,
+        lint: key && { key, target: own },
+      }));
     }
     try {
       // the review page (review.js) loads only when asked for
@@ -250,11 +255,13 @@ async function main(args) {
   const changed = fromLint ? flagged.filter((image) => image.changed) : [];
   for (const { file } of changed) console.error(printable(`${pathFrom(process.cwd(), file)}: changed since the last lint here; left as is (lint again to check it)`));
   // each image, the path to show for it, and its target: a --target given here wins over the lint's.
-  // From a lint's list, also the key of the bytes readFlagged() just found there, the ones the lint
-  // measured: the shrink checks them again when the image's turn comes (shrink.js).
+  // Older lists lack a key. For those, guard the bytes present as this run starts.
   const jobs = once(
     fromLint
-      ? flagged.filter((image) => !image.changed).map((image) => ({ input: pathFrom(process.cwd(), image.file), target: targeted ? target : image.target, lint: { key: fileKey(image.file, image.target)?.key, target: image.target } }))
+      ? flagged.filter((image) => !image.changed).map(({ file, key, target: own }) => ({
+        input: pathFrom(process.cwd(), file), target: targeted ? target : own,
+        lint: { key: key ?? fileKey(file, own)?.key, target: own },
+      }))
       : inputs.map((input) => ({ input, target })),
   );
   if (jobs.length === 0) return 1;

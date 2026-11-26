@@ -410,6 +410,45 @@ test("--review --flagged --format webp after a lint shows what the lint flagged 
   assert.equal(existsSync(reviewFolder(linted)), false);
 });
 
+test("a review with only conflicting WebP destinations can review either original by path", () => {
+  const dir = project({ images: [], files: {
+    "poster.jpg": readFileSync(join(plugin, "example/public/photo.jpg")),
+    "poster.png": readFileSync(join(plugin, "example", BALL)),
+  } });
+  const args = ["--format", "webp", "--min-saved-bytes", "0", "--min-saved-percent", "0"];
+  const both = review(dir, ...args);
+  assert.equal(both.status, 2, both.stderr);
+  assert.match(both.stderr, /^poster\.jpg: poster\.png also writes poster\.webp/m);
+  assert.match(both.stderr, /^poster\.png: poster\.jpg also writes poster\.webp/m);
+  assert.equal(existsSync(join(reviewFolder(dir), "index.html")), false);
+  for (const file of ["poster.jpg", "poster.png"]) {
+    const one = review(dir, ...args, file);
+    assert.equal(one.status, 0, one.stderr);
+    assert.equal(parse(html(dir)).command, `npx oxlint-plugin-slimdeer ${file} --format webp`);
+  }
+  runCommand(dir, parse(html(dir)).command);
+  assert.equal(existsSync(join(dir, "poster.webp")), true);
+});
+
+test("a flagged review catches conflicting copy names across different quality targets", () => {
+  const dir = project({ images: [] });
+  const images = [{ file: "poster.png", target: 75 }, { file: "poster.jpg", target: 80 }, { file: "other/poster.png", target: 75 }];
+  mkdirSync(reviewFolder(dir), { recursive: true });
+  for (const { file, target } of images) {
+    const { preview } = measured(dir, file, { target, own: { saved: 5000, score: target }, copy: { compressed: 3000, score: target } });
+    writeFileSync(join(reviewFolder(dir), preview), Buffer.alloc(3000));
+  }
+  writeFileSync(flaggedList(dir), JSON.stringify({ cwd: realpathSync.native(dir), images }));
+  const shown = review(dir, "--flagged", "--format", "webp");
+  assert.equal(shown.status, 2, shown.stderr);
+  assert.match(shown.stderr, /^poster\.jpg: .*poster\.webp/m);
+  assert.match(shown.stderr, /^poster\.png: .*poster\.webp/m);
+  const { cards, command } = parse(html(dir));
+  assert.deepEqual(cards.map(({ path }) => path), ["other/poster.png"]);
+  assert.equal(command, "npx oxlint-plugin-slimdeer other/poster.png --target 75 --format webp");
+  assert.ok(html(dir).includes("poster.jpg also writes poster.webp"));
+});
+
 test("--review --flagged --format names what it leaves out at each target the lint flagged at, and the cautions, page or no page", () => {
   const dir = project({ images: [], files: { "package.json": JSON.stringify({ dependencies: { astro: "5.0.0" } }) } });
   // no smaller than its shrink, at 70; missing 80; and one that beats its shrink at 80

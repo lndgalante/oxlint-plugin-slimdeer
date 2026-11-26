@@ -29,15 +29,29 @@ export function clash(images, format) {
   for (const image of images) {
     // a second run over public/* finds the first one's copies: they're no reason to stop
     if (COPIES.has(extname(image).toLowerCase())) continue;
-    const copy = copyOf(image, format);
-    // the folder as the filesystem spells it, so one reached through a link is the same folder
-    const path = join(physical(dirname(resolve(copy))), basename(copy));
-    const key = CASELESS ? path.toLowerCase() : path;
-    const first = seen.get(key);
+    const first = firstCopy(seen, copyOf(image, format), image);
     if (first) return `${first} and ${image} would both be written as ${copyOf(first, format)}: convert one of them with -o`;
-    seen.set(key, image);
   }
   return null;
+}
+
+/** Remember a copy by its destination. If another image claimed it, return that entry. */
+export function firstCopy(seen, output, image, entry = image) {
+  const folder = physical(dirname(resolve(output)));
+  const remember = (name) => {
+    const path = join(folder, name);
+    const key = CASELESS ? path.toLowerCase() : path;
+    const first = seen.get(key);
+    if (!first) seen.set(key, entry);
+    return first === entry ? undefined : first;
+  };
+  const name = basename(output);
+  const first = remember(name);
+  const normal = name.normalize();
+  if (first || normal === name) return first;
+  // Probe with the existing image: APFS aliases composed and decomposed names, ext4 can hold both.
+  const source = basename(image);
+  if (physical(join(folder, source)) === physical(join(folder, source.normalize()))) return remember(normal);
 }
 
 /**

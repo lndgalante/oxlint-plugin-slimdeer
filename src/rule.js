@@ -20,6 +20,7 @@ const NO_INLINE_CONFIG = process.argv.includes("--no-inline-config");
 const REMOTE = /^[a-z][a-z0-9+.-]*:|^\/\//i;
 // a comment that turns rules off or on again: its kind, then its rules, if any, and its reason
 const DIRECTIVE = /^\s*(?:oxlint|eslint)-(disable-next-line|disable-line|disable|enable)\b(.*)$/s;
+const START = { line: 1, column: 0 };
 const DEFAULTS = { minSavedBytes: 4096, minSavedPercent: 10, target: "auto", measure: "auto", scan: "project", exclude: [] };
 // when neither the settings nor the project's tsconfig/jsconfig define aliases
 const ALIASES = { "@/": "src/", "~/": "src/" };
@@ -152,22 +153,22 @@ export default {
     };
     const wait = measure === "always" || (measure === "auto" && !EDITOR);
     const found = [];
-    const nextImages = new Set(); // this file's local names for next/image's default export
+    const nextImages = new Map(); // local name -> identifier importing next/image's default export
 
     const reported = new Set(); // images warned about in this file: once each, at their first mention
-    let disabled; // (line) => whether a comment turns this rule off there, read on first use
-    let kept; // (line) => whether a comment there says to keep the image, even where the linter ignores it
+    let disabled; // whether a comment turns this rule off at a source position, read on first use
+    let kept; // whether a comment there says to keep the image, even where the linter ignores it
     if (!EDITOR) watch(root, { minSavedBytes, minSavedPercent, target, dir, scan, exclude, publicDirs }, from);
 
     function check(node, text, extract = imagesIn) {
-      for (const { file, part } of extract(text, find)) {
+      for (const { file, part, offset } of extract(text, find)) {
         if (off(file)) continue;
         const image = fileKey(file, target);
-        const loc = part && within(node, part);
+        const loc = part && within(node, part, text, offset);
         if (!EDITOR) {
           name(file);
-          disabled ??= disabledLines(context.sourceCode, context.id ?? RULE);
-          if (!disabled((loc?.start ?? node.loc.start).line)) requireTarget(file, target);
+          disabled ??= disabledAt(context.sourceCode, context.id ?? RULE);
+          if (!disabled(loc?.start ?? node.loc.start)) requireTarget(file, target);
         }
         // a file smaller than minSavedBytes can't save that much: not worth measuring
         if (image && image.size >= minSavedBytes) found.push({ node, file, k: image.key, frames: image.frames, loc });
@@ -178,12 +179,19 @@ export default {
     // image alone; null if the source spells it differently (escapes), and the whole string is used.
     // Where a path starts, not where it ends an earlier one ("/bg.png" in "url(/img/bg.png)"), unless
     // none does (an escape like \n just before it).
-    function within(node, part) {
+    function within(node, part, value, offset) {
       const source = context.sourceCode;
       const text = source.getText(node);
       let at = text.indexOf(part);
-      while (at > 0 && /[\w./-]/.test(text[at - 1])) at = text.indexOf(part, at + 1);
-      if (at < 0) at = text.indexOf(part);
+      if (offset !== undefined) {
+        // An escape before the URL shifts its offset. Match from either end of the quoted source.
+        if (text.startsWith(value.slice(0, offset + part.length), 1)) at = 1 + offset;
+        else if (text.endsWith(value.slice(offset), text.length - 1)) at = text.length - 1 - (value.length - offset);
+        else if (value.indexOf(part) !== value.lastIndexOf(part) || at !== text.lastIndexOf(part)) return null;
+      } else {
+        while (at > 0 && /[\w./-]/.test(text[at - 1])) at = text.indexOf(part, at + 1);
+        if (at < 0) at = text.indexOf(part);
+      }
       if (at < 0) return null;
       const start = node.range[0] + at;
       return { start: source.getLocFromIndex(start), end: source.getLocFromIndex(start + part.length) };
@@ -199,21 +207,21 @@ export default {
       // --no-inline-config shows that warning, but the comment still says to keep the image. So does
       // a comment with the rule's old name, though the linter no longer knows it (compat.js): read
       // apart from the rule's own, as the linter doesn't take an old name's -enable as ending a -disable.
-      disabled ??= disabledLines(context.sourceCode, context.id ?? RULE);
+      disabled ??= disabledAt(context.sourceCode, context.id ?? RULE);
       if (!kept) {
-        const own = NO_INLINE_CONFIG ? disabledLines(context.sourceCode, context.id ?? RULE, false) : disabled;
-        const old = disabledLines(context.sourceCode, context.id ?? RULE, false, [OLD_RULE]);
-        kept = (line) => own(line) || old(line);
+        const own = NO_INLINE_CONFIG ? disabledAt(context.sourceCode, context.id ?? RULE, false) : disabled;
+        const old = disabledAt(context.sourceCode, context.id ?? RULE, false, [OLD_RULE]);
+        kept = (at) => own(at) || old(at);
       }
-      const line = (loc?.start ?? node.loc.start).line;
-      const suppressed = disabled(line);
+      const at = loc?.start ?? node.loc.start;
+      const suppressed = disabled(at);
       // The linter needs the report even when disabled, to recognize a used directive.
       if (!suppressed) reported.add(path);
       // with the key of the bytes measured (--flagged leaves alone other bytes there since), and the
       // folder it was measured into, unless it's the one --review --flagged reads by default, the
       // image's own package's local one: the settings name another, or the image is another package's
       const measuredIn = dir === cacheDir(projectRoot(dirname(file), context.cwd)) ? undefined : dir;
-      if (!EDITOR && !kept(line)) flag(file, from, { original: result.original, compressed: result.compressed, outcome: result.outcome, score: result.score, target, key: k, cacheDir: measuredIn });
+      if (!EDITOR && !kept(at)) flag(file, from, { original: result.original, compressed: result.compressed, outcome: result.outcome, score: result.score, target, key: k, cacheDir: measuredIn });
       // this package's own command (bin/slimdeer.js), at the target measured, so it writes exactly the
       // file this promises; named by the package, so npx can't fetch someone else's
       const command = shrinkCommand([shown(file)], target);
@@ -269,9 +277,18 @@ export default {
       const attribute = node.parent?.type === "JSXExpressionContainer" ? node.parent.parent : node.parent;
       if (attribute?.type !== "JSXAttribute" || attribute.name.name !== "src") return false;
       const element = attribute.parent;
-      if (element.name.type !== "JSXIdentifier" || !nextImages.has(element.name.name)) return false;
+      if (!nextComponent(element.name)) return false;
       // unoptimized serves the file as it is, and so may a loader of its own or spread props
       return element.attributes.every((other) => other.type === "JSXAttribute" && other.name.name !== "loader" && (other.name.name !== "unoptimized" || isFalse(other.value)));
+    }
+
+    function nextComponent(tag) {
+      if (tag.type !== "JSXIdentifier" || !nextImages.has(tag.name) || /^[a-z]/.test(tag.name)) return false;
+      for (let scope = context.sourceCode.getScope(tag); scope; scope = scope.upper) {
+        const binding = scope.set.get(tag.name);
+        if (binding && binding.isValueVariable !== false) return binding.identifiers.includes(nextImages.get(tag.name));
+      }
+      return false;
     }
 
     // When the lint waits for measuring, says once per image what the warnings can't: why one is missing.
@@ -296,10 +313,10 @@ export default {
         else for (const quasi of node.quasis) check(quasi, text(quasi), urlsIn);
       },
       ImportDeclaration(node) {
-        if (!NEXT_IMAGE.has(node.source.value)) return;
+        if (!NEXT_IMAGE.has(node.source.value) || node.importKind === "type") return;
         for (const specifier of node.specifiers) {
           const imported = specifier.imported?.name ?? specifier.imported?.value;
-          if (specifier.type === "ImportDefaultSpecifier" || imported === "default") nextImages.add(specifier.local.name);
+          if (specifier.importKind !== "type" && (specifier.type === "ImportDefaultSpecifier" || imported === "default")) nextImages.set(specifier.local.name, specifier.local);
         }
       },
       // In project mode, the first file also measures unnamed images in the same parallel batch.
@@ -308,16 +325,16 @@ export default {
         // a disable comment with the rule's old name, which the linter no longer knows (compat.js),
         // unless the line it covers is off anyway: the comment names the rule both ways, or a bare -disable
         if (!EDITOR && (context.id ?? RULE) !== OLD_RULE && context.sourceCode.text.includes(OLD_RULE)) {
-          disabled ??= disabledLines(context.sourceCode, context.id ?? RULE);
-          const covered = ({ kind, comment }) => (kind === "disable-next-line" ? comment.loc.end.line + 1 : comment.loc.start.line);
+          disabled ??= disabledAt(context.sourceCode, context.id ?? RULE);
+          const covered = ({ kind, comment }) => (kind === "disable-next-line" ? { line: comment.loc.end.line + 1, column: 0 } : comment.loc.start);
           const old = directives(context.sourceCode).filter((directive) => directive.kind !== "enable" && directive.rules.includes(OLD_RULE) && !disabled(covered(directive)));
           oldCommentLines(from, old.map(({ comment }) => ({ line: comment.loc.start.line })), context.cwd);
         }
         // the problem of a run that ran out of time, which the file that measured turned off (measureNow)
         const owed = EDITOR ? null : owing();
         if (owed) {
-          disabled ??= disabledLines(context.sourceCode, context.id ?? RULE);
-          if (!disabled(1)) incomplete(owed);
+          disabled ??= disabledAt(context.sourceCode, context.id ?? RULE);
+          if (!disabled(START)) incomplete(owed);
         }
         const group = JSON.stringify([root, dir, target, minSavedBytes, scan, exclude]);
         const first = scan === "project" && measure !== "never" && !scanned.has(group);
@@ -333,28 +350,33 @@ export default {
           return image && !image.marked && !lookup(image.key, file);
         };
         // with measure "never" only --check fills the cache: an empty one would report nothing, without a word
-        const missing = measure === "never" && !EDITOR ? found.filter(({ file }) => unmeasured(file)) : [];
+        const named = new Set(found.map(({ file }) => file));
+        const missing = measure === "never" && !EDITOR ? [...named].filter(unmeasured) : [];
         if (missing.length) {
           // --check measures an image into its own package's folder, where lookup() finds it (homes())
-          const paths = projectPaths(missing.map(({ file }) => projectRoot(dirname(file), context.cwd)));
+          const paths = projectPaths(missing.map((file) => projectRoot(dirname(file), context.cwd)));
           const command = checkCommand(paths, { target, exclude: excludeOption, minSavedBytes, minSavedPercent, cacheDir: settings.cacheDir });
           neverLine(command, settings.cacheDir ?? pathFrom(root, local));
         }
-        const named = measure === "never" ? [] : found.map(({ file }) => file);
         // the walk takes a linked image file by the link's own path: an exclusion holds for where it leads too
-        const files = distinct([...new Set(first ? [...named, ...projectImages(root, minSavedBytes, exclude).filter((file) => !off(file))] : named)].filter(unmeasured));
+        const candidates = first ? new Set([...named, ...projectImages(root, minSavedBytes, exclude).filter((file) => !off(file))]) : named;
+        const files = measure === "never" ? [] : distinct([...candidates].filter(unmeasured));
         if (files.length) {
           if (!wait) {
             // this file's own images first, in a batch of their own, so its warnings don't wait for
             // the whole project's (a batch measures the smallest image first, then the largest files)
-            const own = files.filter((file) => named.includes(file));
+            const own = files.filter((file) => named.has(file));
             if (own.length && own.length < files.length) fillInBackground({ dir, failures: local, target, files: own });
             fillInBackground({ dir, failures: local, target, files });
           } else if (!failed.has(root)) measureNow(files, unmeasured);
         }
         const reencoded = nextImages.size ? reencodedImages() : new Set();
+        const results = new Map();
         for (const ref of found) {
-          const result = lookup(ref.k, ref.file);
+          // Identical bytes can live in packages with different cache folders.
+          const id = `${ref.file}\0${ref.k}`;
+          const result = results.get(id) ?? lookup(ref.k, ref.file);
+          if (result) results.set(id, result);
           tell(ref.file, result);
           report(ref, result, reencoded.size && reencoded.has(physical(ref.file)) ? REENCODED : "");
         }
@@ -400,8 +422,8 @@ export default {
           const data = { after: error.after, left: count(files.filter(unmeasured).length, "image") };
           // ESLint drops a problem where a comment turns the rule off: the next file in this thread
           // that doesn't reports it, or else, if no thread reported one, the summary fails the lint
-          disabled ??= disabledLines(context.sourceCode, context.id ?? RULE);
-          if (!EDITOR && disabled(1)) owe(data);
+          disabled ??= disabledAt(context.sourceCode, context.id ?? RULE);
+          if (!EDITOR && disabled(START)) owe(data);
           else incomplete(data);
         }
       }
@@ -410,7 +432,7 @@ export default {
     function incomplete(data) {
       context.report({
         node: context.sourceCode.ast,
-        loc: { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
+        loc: { start: START, end: START },
         messageId: "incomplete",
         data,
       });
@@ -464,15 +486,27 @@ function imagesIn(text, find) {
   // with its query or hash; but a srcSet whose first candidate has one goes on after it.
   const files = usable(whole) && !/[\s,]/.test(trimmed.slice(whole.length)) ? find(whole) : [];
   if (files.length) return files.map((file) => ({ file, part: null }));
-  const parts = text
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => part.split(/\s+/));
-  const candidates = parts.every((tokens) => tokens.length === 1 || (tokens.length === 2 && DESCRIPTOR.test(tokens[1])))
-    ? parts.flatMap(([part]) => filesOf(part, find))
-    : [];
+  const candidates = srcSet(text).flatMap(({ part, offset }) => filesOf(part, find, offset));
   return candidates.length ? candidates : urlsIn(text, find);
+}
+
+/** A srcSet URL runs to the next ASCII whitespace. Commas inside it belong to the URL. */
+function srcSet(text) {
+  const parts = [];
+  const urls = /[^,\t\n\f\r ][^\t\n\f\r ]*/g;
+  for (let match; (match = urls.exec(text));) {
+    let endURL = urls.lastIndex;
+    while (text[endURL - 1] === ",") endURL--;
+    const part = text.slice(match.index, endURL);
+    parts.push({ part, offset: match.index });
+    if (endURL < urls.lastIndex) continue;
+    const comma = text.indexOf(",", urls.lastIndex);
+    const end = comma < 0 ? text.length : comma;
+    const descriptor = text.slice(urls.lastIndex, end).trim();
+    if (descriptor && !DESCRIPTOR.test(descriptor)) return [];
+    urls.lastIndex = end;
+  }
+  return parts;
 }
 
 /** The image files the CSS url()s in a text name, as imagesIn() gives them: background: url("/bg.png"). */
@@ -483,9 +517,9 @@ function urlsIn(text, find) {
 }
 
 /** The image files one `part` of a text names, as imagesIn() gives them; none if it can't name a local image. */
-function filesOf(part, find) {
+function filesOf(part, find, offset) {
   const path = strip(part);
-  return usable(path) ? find(path).map((file) => ({ file, part })) : [];
+  return usable(path) ? find(path).map((file) => ({ file, part, offset })) : [];
 }
 
 /** A path without its query or hash; a leading # is a subpath import ("#assets/x.png"), not a hash. */
@@ -499,11 +533,11 @@ function usable(path) {
 }
 
 /**
- * Whether a comment turns this rule off at a line: `oxlint-` or `eslint-disable-next-line` above it,
+ * Whether a comment turns this rule off at a source position: `oxlint-` or `eslint-disable-next-line` above it,
  * `-disable-line` on it, or a `-disable` block around it, for this rule (`id`, as the config names
  * the plugin, or any name in `also`) or for all rules. Nowhere when the linter `ignores` such comments.
  */
-function disabledLines(source, id, ignores = NO_INLINE_CONFIG, also = []) {
+function disabledAt(source, id, ignores = NO_INLINE_CONFIG, also = []) {
   if (ignores) return () => false;
   const names = [id, RULE, ...also];
   const lines = new Set();
@@ -513,14 +547,15 @@ function disabledLines(source, id, ignores = NO_INLINE_CONFIG, also = []) {
     if (rules.length && !rules.some((rule) => names.includes(rule))) continue;
     if (kind === "disable-next-line") lines.add(comment.loc.end.line + 1);
     else if (kind === "disable-line") lines.add(comment.loc.start.line);
-    else if (kind === "disable") open ??= comment.loc.start.line;
+    else if (kind === "disable") open ??= comment.loc.start;
     else if (open !== null) {
-      blocks.push([open, comment.loc.start.line]);
+      blocks.push([open, comment.loc.start]);
       open = null;
     }
   }
-  if (open !== null) blocks.push([open, Infinity]);
-  return (line) => lines.has(line) || blocks.some(([from, to]) => line >= from && line <= to);
+  if (open !== null) blocks.push([open, null]);
+  const compare = (a, b) => a.line - b.line || a.column - b.column;
+  return (at) => lines.has(at.line) || blocks.some(([from, to]) => compare(from, at) <= 0 && (!to || compare(at, to) < 0));
 }
 
 /** The comments in a file that turn rules off or on again, as { kind, rules, comment }: `rules` empty for all of them. */
