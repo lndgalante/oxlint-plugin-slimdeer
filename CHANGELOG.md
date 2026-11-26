@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.4 (2026-11-26)
+
+- `--flagged` and `--review --flagged` recheck the lint's content key when reading an image, including when `--target` overrides the lint's target. This catches a replacement that lands after the command reads the list.
+- In `srcSet`, a comma inside a URL stays with the URL. Inline block disable and enable comments apply at their column, and the `next/image` note follows the imported component through nested scopes.
+- When two qualifying sources would write the same WebP or AVIF path, `--check` and `--review` report both, omit them from suggested commands, and exit 2. Either source can be reviewed by path.
+- Cold same-format reviews skip previews below the savings thresholds. Repeated references to an image reuse its cached measurement within a source file.
+
+[Release notes](docs/releases/0.6.4.md)
+
 ## 0.6.3 (2026-11-26)
 
 - With nothing cached yet, `--review` saves each same-format preview during measuring instead of compressing every image a second time (4.7 s vs 9.6 s on `example/`).
