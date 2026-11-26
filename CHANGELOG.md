@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.3 (2026-11-26)
+
+- With nothing cached yet, `--review` saves each same-format preview during measuring instead of compressing every image a second time (4.7 s vs 9.6 s on `example/`).
+- Finished worker lanes terminate their engines as soon as no jobs remain, and the memory budget estimates 180 bytes per pixel for PNGs below 8 MP.
+- JPEGs with `0xFF` fill bytes before markers are read, marked and compressed; prose strings starting with an image path are no longer mistaken for `srcSet` lists; `%23`/`%26`/`%2B`-escaped filenames resolve while `%2F`/`%5C` stay out of folder paths; `tsconfig.json` `references` keep looking past configs whose `paths` define no folder aliases.
+- CMYK JPEGs are detected before starting WebAssembly and included in `--check`'s `--exclude` suggestion.
+- The review page sizes already-loaded EXIF-rotated photos right away and cleans up touch tap listeners.
+- Lint summary tables and GitHub Actions job summaries print `lossless` for lossless results, avoid sibling path false matches, and fence Markdown command blocks past backticks.
+
+[Release notes](docs/releases/0.6.3.md)
+
 ## 0.6.2 (2026-11-18)
 
 - When Vite+ runs the lint or the command (`vp lint`, `vp exec`), the commands they print start with `vp exec` in place of `npx`: the warning's, the summary's, `--check`'s and the review page's. A new Vite+ app pins its package manager, and npm then refuses to run `npx` in it (`EBADDEVENGINES`), so the commands 0.6.1 printed failed there.

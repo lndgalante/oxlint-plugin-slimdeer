@@ -1,6 +1,6 @@
 {
   "name": "oxlint-plugin-slimdeer",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Lint rule for oxlint and ESLint: flags PNGs and JPEGs your code uses that could be at least 4 KiB and 10% smaller at about the same visual quality. Its command shows them before and after, shrinks them, or writes WebP and AVIF copies. No upload.",
   "keywords": [
     "oxlint",
