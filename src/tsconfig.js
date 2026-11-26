@@ -39,7 +39,8 @@ function projectAliases(root, seen) {
     const file = configFile(resolve(dirname(leaf), reference.path), seen);
     if (!file) continue;
     const referenced = effective(file, dirname(file), seen, new Set());
-    if (referenced?.paths !== undefined) return aliasesOf(referenced, root, dirname(file));
+    const aliases = referenced?.paths !== undefined ? aliasesOf(referenced, root, dirname(file)) : null;
+    if (aliases) return aliases;
   }
   return null;
 }

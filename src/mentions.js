@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { projectFiles, projectRoot } from "./scan.js";
-import { holds, ORDER, PAGE_BYTES } from "./summary.js";
+import { holds, holdsPath, ORDER, PAGE_BYTES } from "./summary.js";
 import { pathFrom } from "./text.js";
 
 const WIDTH = 100; // characters of a line shown, so a minified file's line stays one line
@@ -34,7 +34,7 @@ export function mentions(image, root, publicDirs = ["public", "static"], cwd = p
       pathFrom(home, path),
       ...publicDirs.map((dir) => `/${pathFrom(join(home, dir), path)}`).filter((form) => !form.startsWith("/..")),
     ]);
-    return lines(page, paths, named);
+    return lines(page, paths, holdsPath);
   });
   return byPath.length ? byPath : pages.flatMap((page) => lines(page, names, holds));
 }
@@ -45,19 +45,6 @@ function lines({ path, text, folded }, spellings, test) {
   const shown = text.split("\n");
   // a "\r\n" line keeps its "\r" until it's trimmed, so the numbers are the same
   return folded.split("\n").flatMap((line, i) => (spellings.some((spelling) => test(line, spelling)) ? [{ file: path, line: i + 1, text: cut(shown[i].trim().replace(/\t+/g, " ")), markdown }] : []));
-}
-
-/**
- * Whether `line` names a file by `spelling`, a path from the file or the project: a bare name only
- * alone, or after "/" or "./" that start a path, as "img/hero.png" names another hero.png.
- */
-function named(line, spelling) {
-  if (spelling.includes("/")) return holds(line, spelling);
-  for (let at = line.indexOf(spelling); at >= 0; at = line.indexOf(spelling, at + 1)) {
-    const start = at >= 2 && line.startsWith("./", at - 2) ? at - 2 : line[at - 1] === "/" ? at - 1 : at;
-    if (start === 0 || !/[\w./-]/.test(line[start - 1])) return true;
-  }
-  return false;
 }
 
 /** Where to look, from the folder `cwd`, for the lines that name an image of the project at `root`: see mentions(). */

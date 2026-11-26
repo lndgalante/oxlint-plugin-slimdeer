@@ -96,6 +96,57 @@ test("a JPEG's mark goes after its APPn segments", () => {
   assert.equal(withMark[3], 0xe0, "APP0 stays right after SOI");
 });
 
+test("JPEGs with 0xFF fill bytes before markers are read, marked and shrunk", async () => {
+  const app0End = 4 + jpeg.readUInt16BE(4);
+  let appnEnd = 2;
+  while (jpeg[appnEnd] === 0xff && jpeg[appnEnd + 1] >= 0xe0 && jpeg[appnEnd + 1] <= 0xef) appnEnd += 2 + jpeg.readUInt16BE(appnEnd + 2);
+  const oneFill = Buffer.concat([jpeg.subarray(0, 2), Buffer.from([0xff]), jpeg.subarray(2)]);
+  const manyFills = Buffer.concat([jpeg.subarray(0, 2), Buffer.from([0xff, 0xff, 0xff]), jpeg.subarray(2, app0End), Buffer.from([0xff, 0xff]), jpeg.subarray(app0End)]);
+  const expected = dimensions(jpeg, "jpeg");
+  for (const bytes of [oneFill, manyFills]) {
+    assert.deepEqual(dimensions(bytes, "jpeg"), expected);
+    assert.equal(unsupported(bytes), null);
+    const withMark = mark(bytes);
+    assert.equal(marked(withMark), true);
+    assert.deepEqual(dimensions(withMark, "jpeg"), expected);
+  }
+  // APPn segments stay before COM even when 0xFF fill bytes precede them
+  const markedOne = mark(oneFill);
+  assert.equal(markedOne[4], 0xe0, "APP0 stays right after SOI and its fill byte");
+  assert.equal(markedOne[appnEnd + 1], 0xff);
+  assert.equal(markedOne[appnEnd + 2], 0xfe, "COM goes right after the APPn segments");
+  const markedMany = mark(manyFills);
+  assert.equal(markedMany[appnEnd + 5], 0xff);
+  assert.equal(markedMany[appnEnd + 6], 0xfe, "COM still goes after APPn segments with fills between them");
+
+  const dir = project({ images: [], files: { "filled.jpg": manyFills } });
+  const file = join(dir, "filled.jpg");
+  await fill({ dir: cacheDir(dir), files: [file] });
+  const entry = read(cacheDir(dir), key(manyFills));
+  assert.equal(entry.skipped, undefined);
+  assert.ok(entry.compressed < manyFills.length);
+  shrink(file, file);
+  const written = readFileSync(file);
+  assert.equal(marked(written), true);
+  assert.equal(entry.compressed, written.length);
+});
+
+test("standalone JPEG markers before SOF don't derail header or mark scanning", () => {
+  const app0End = 4 + jpeg.readUInt16BE(4);
+  const withTem = Buffer.concat([jpeg.subarray(0, app0End), Buffer.from([0xff, 0x01]), jpeg.subarray(app0End)]);
+  assert.deepEqual(dimensions(withTem, "jpeg"), dimensions(jpeg, "jpeg"));
+  const markedBytes = mark(withTem);
+  assert.equal(marked(markedBytes), true);
+  // a COM mark placed after a standalone marker is still found
+  const com = Buffer.from(`slimdeer ${withTem.length}`, "latin1");
+  const segment = Buffer.alloc(4 + com.length);
+  segment.writeUInt16BE(0xfffe, 0);
+  segment.writeUInt16BE(2 + com.length, 2);
+  com.copy(segment, 4);
+  const afterTem = Buffer.concat([withTem.subarray(0, app0End + 2), segment, withTem.subarray(app0End + 2)]);
+  assert.equal(marked(afterTem), true);
+});
+
 test("a PNG turned by EXIF stays turned when shrunk, at the size the lint measured", async () => {
   // macOS sips writes a rotated photo this way; slimdeer itself drops eXIf
   const bytes = withChunks(png, exif(6, "MM"));
@@ -152,15 +203,47 @@ test("a grayscale PNG with a color profile is left alone, as slimdeer's output c
   assert.deepEqual(readFileSync(file), image(0, profile));
 });
 
+test("a CMYK JPEG is left alone before starting the engine, and cached as skipped", async () => {
+  const cmyk = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x14, 0x08, 0x00, 0x10, 0x00, 0x10, 0x04, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0, 0xff, 0xda, 0x00, 0x02]),
+    Buffer.alloc(5000),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+  const why = "a CMYK JPEG (convert it to RGB)";
+  assert.equal(unsupported(cmyk), why);
+  const dir = project({ images: [], files: { "cmyk.jpg": cmyk } });
+  const file = join(dir, "cmyk.jpg");
+  assert.throws(() => shrink(file, file), { message: why });
+  assert.deepEqual(readFileSync(file), cmyk);
+  const result = await fill({ dir: cacheDir(dir), files: [file] });
+  assert.equal(result.skipped, 1);
+  assert.equal(result.failed, 0);
+  assert.deepEqual(read(cacheDir(dir), key(cmyk)), { original: cmyk.length, skipped: why });
+});
+
 test("anything else comes back unmarked, and nothing throws on junk", () => {
-  const junk = [Buffer.alloc(0), Buffer.from("GIF89a"), png.subarray(0, 30), jpeg.subarray(0, 5), Buffer.from([0xff, 0xd8, 0xff, 0xfe, 0, 0])];
+  const junk = [
+    Buffer.alloc(0),
+    Buffer.from("GIF89a"),
+    png.subarray(0, 30),
+    jpeg.subarray(0, 5),
+    Buffer.from([0xff, 0xd8, 0xff, 0xfe, 0, 0]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xfe, 0, 1, 0xff, 0xc0, 0, 11, 8, 0, 10, 0, 10, 1]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xff, 0xff]),
+    Buffer.from([0xff, 0xd8, 0xff, 0x00, 0xff, 0xc0, 0, 11, 8, 0, 10, 0, 10, 1]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xd9, 0xff, 0xc0, 0, 11, 8, 0, 10, 0, 10, 1]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 10]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 1]),
+  ];
   const badExif = [Buffer.alloc(0), Buffer.from("MM\0*"), Buffer.from("MM\0*\xff\xff\xff\xff\0\0", "latin1"), Buffer.from("XX\0*\0\0\0\x08\0\x01", "latin1")];
   for (const bytes of junk) {
     assert.doesNotThrow(() => marked(bytes));
     assert.equal(marked(bytes), false);
     assert.doesNotThrow(() => unsupported(bytes));
+    assert.doesNotThrow(() => mark(bytes));
     assert.doesNotThrow(() => keepOrientation(withChunks(png, exif(6, "MM")), bytes));
   }
+  for (const bytes of junk.slice(4)) assert.equal(unsupported(bytes), "unreadable header");
   for (const data of badExif) assert.equal(keepOrientation(withChunks(png, chunk("eXIf", data)), png), png);
   assert.equal(mark(Buffer.from("GIF89a")).toString(), "GIF89a");
 });

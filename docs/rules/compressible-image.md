@@ -314,7 +314,6 @@ npx oxlint-plugin-slimdeer --review --flagged [--open] [--target auto|T] [--cach
 ```
 $ npx oxlint-plugin-slimdeer --review
 slimdeer: measuring 5 images not in the cache yet...
-slimdeer: writing 5 previews...
 slimdeer: 5 images could be 723 kB smaller (1.0 MB → 317 kB, 70% smaller). Images unchanged.
 slimdeer: the page that compares each one before and after: file:///…/example/node_modules/.cache/slimdeer/review/index.html
 slimdeer: open it in a browser, untick any image to keep as it is, and run the command it gives.
@@ -331,7 +330,7 @@ The page:
 
 `--open` opens the page with the system's opener (`open` on macOS, `xdg-open` elsewhere, and on Windows its own `explorer.exe`, by its full path) and waits up to 2 seconds to see whether it fails. Without it nothing opens, which suits CI and coding agents: they can give you the printed address. When the opener is missing or fails, like `xdg-open` over SSH with no display, the command says to open the printed address in a browser, then says on stderr that it couldn't open one; the exit code doesn't change.
 
-After a lint or `--check`, a review compresses each listed image once more, for its preview; with nothing cached, it measures first. A second review reuses the previews, and an interrupted one keeps the ones it wrote. The review folder belongs to the command: each review removes anything else in it, it has its own `.gitignore`, and if it is a link to another folder, `--review` refuses to run. After its totals, `--review` prints the notes `--check` would (Gatsby builds, LFS pointers, files it can't take, images the floor turned down, images short of the target), with `--review` in the commands that run the same thing again; for Gatsby's build output, that command names your paths too, since a page shows one run's images:
+With nothing cached, a review writes each preview as it measures, so it compresses each image once. After a lint or `--check`, it compresses each listed image once more, for its preview. A second review reuses the previews, and an interrupted one keeps the ones it wrote. The review folder belongs to the command: each review removes anything else in it, it has its own `.gitignore`, and if it is a link to another folder, `--review` refuses to run. After its totals, `--review` prints the notes `--check` would (Gatsby builds, LFS pointers, files it can't take, images the floor turned down, images short of the target), with `--review` in the commands that run the same thing again; for Gatsby's build output, that command names your paths too, since a page shows one run's images:
 
 ```
 slimdeer: left out 1 image in public, Gatsby's build output; to review it too, run: npx oxlint-plugin-slimdeer --review . public

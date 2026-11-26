@@ -26,7 +26,7 @@ const REPORT_ERRORS = 10;
 const NOT_IMAGE = "not a PNG or JPEG";
 // How the other reasons images.js's unsupported() gives start: a file a check finds again each time
 // (a Git LFS pointer, which git lfs pull fixes, has a line of its own).
-const REFUSED = [NOT_IMAGE, "unreadable header", "a grayscale PNG", "too large", "animation too large"];
+const REFUSED = [NOT_IMAGE, "unreadable header", "a CMYK JPEG", "a grayscale PNG", "too large", "animation too large"];
 
 /**
  * Checks images without rewriting them: 0 clean, 1 savings found, 2 incomplete or failed. The lines

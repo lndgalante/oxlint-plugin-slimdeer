@@ -112,7 +112,7 @@ async function measure(requests, progress, onStart) {
   const queued = new Set(); // each job's folders and key: copies of one image are measured once
   const counts = { computed: 0, cached: 0, skipped: 0, failed: 0, declined: 0 };
   for (const request of requests) {
-    const { dir, failures = dir, target } = request;
+    const { dir, failures = dir, target, previewDir } = request;
     for (const file of new Set(request.files)) {
       let bytes;
       try {
@@ -142,7 +142,7 @@ async function measure(requests, progress, onStart) {
         continue;
       }
       queued.add(id);
-      todo.push({ request, file, k, size: bytes.length, peak: peakOf(bytes), message: { file, target } });
+      todo.push({ request, file, k, size: bytes.length, peak: peakOf(bytes), message: { file, target, ...(previewDir !== undefined && { previewDir }) } });
     }
   }
   if (todo.length) onStart(todo.length, [...new Set(todo.map(({ request }) => request.dir))]);
@@ -341,6 +341,13 @@ export async function pool(jobs, { done, skip = () => false, spare = 0 }) {
         wake();
       }
     }
+    // free this lane's wasm heap as soon as no jobs remain, rather than holding it while slower lanes finish
+    if (self.worker) {
+      const worker = self.worker;
+      self.worker = null;
+      self.held = 0;
+      await worker.terminate();
+    }
   };
   try {
     await Promise.all(lanes.map(lane));
@@ -461,16 +468,13 @@ export function unlock(folder, thread = threadId, what = "measuring") {
 export function peakOf(bytes, format) {
   const type = kind(bytes);
   const [width, height, frames] = type ? dimensions(bytes, type) : [0, 0, 1];
+  const pixels = width * height * frames;
   // above every AVIF peak measured: 92 MB at 0.39 MP, 209 MB at 0.97, 388 MB at 2.43
-  if (format === "avif") return 70e6 + width * height * frames * 150;
-  return peak(width * height * frames);
-}
-
-/** An engine's expected peak memory for an image of this many pixels (over all its frames). */
-function peak(pixels) {
-  // about 125 bytes a pixel below 8 MP and 85 above (slimdeer keeps a lean reference there), on top
-  // of about 50 MB of its own
-  return 50e6 + pixels * (pixels < 8e6 ? 125 : 85);
+  if (format === "avif") return 70e6 + pixels * 150;
+  // below 8 MP, PNG quantization peaks higher (~163–179 B/px measured on 1.3–2.3 MP PNGs) than
+  // JPEG (~108–114 B/px); above 8 MP slimdeer keeps a lean reference (~85 B/px), on ~50 MB base
+  const perPixel = pixels < 8e6 ? (!format && type === "png" ? 180 : 125) : 85;
+  return 50e6 + pixels * perPixel;
 }
 
 // A quarter of the memory there is (a container's limit if any), capped at 4 GB.

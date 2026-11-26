@@ -80,6 +80,23 @@ test("a srcSet whose candidates carry a query or hash is read candidate by candi
   assert.deepEqual(eslintSpans(eslint(dir, "src")), expected);
 });
 
+test("prose starting with an image path isn't mistaken for a srcSet", () => {
+  const files = {
+    "src/App.jsx": [
+      'export const a = "/hero.png is used in the header";',
+      'export const b = "/hero.png, which is shown in the header";',
+      'export const c = "/hero.png 2";',
+      'export const d = <img srcSet="/ok.png, /wide.png 800w, /hi.png 1.5x" />;',
+      'export const e = <img srcSet="https://cdn.example/w_400,q_auto/a.png 400w, /cdn-sibling.png 800w" />;',
+      "",
+    ].join("\n"),
+  };
+  const dir = project({ files, images: [] });
+  place(dir, ball, "public/hero.png", "public/ok.png", "public/wide.png", "public/hi.png", "public/cdn-sibling.png");
+  assert.deepEqual(names(oxlint(dir)), ["cdn-sibling.png", "hi.png", "ok.png", "wide.png"]);
+  assert.deepEqual(names(eslint(dir, "src")), ["cdn-sibling.png", "hi.png", "ok.png", "wide.png"]);
+});
+
 test("a path that ends an earlier one in the same string is underlined where it's written, not in the earlier one", () => {
   const files = {
     "src/App.jsx": [

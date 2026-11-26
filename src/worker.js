@@ -5,10 +5,12 @@
 // With a `format` ("webp", "avif"): { file, target, format } measures the file as that format, and
 // { file, target, format, out, mode } writes it as the command does (convert.js).
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parentPort } from "node:worker_threads";
 import { convertKey, key } from "./cache.js";
 import { convertImage } from "./convert.js";
 import { compress, convert, trapped } from "./engine.js";
+import { kind } from "./images.js";
 import { keepOrientation, mark } from "./marker.js";
 import { plain, save, shrink } from "./shrink.js";
 
@@ -19,7 +21,7 @@ parentPort.on("message", (message) => {
   parentPort.postMessage(trapped() ? { ...reply, trapped: true } : reply);
 });
 
-function answer({ file, target, format, out, mode, lint }) {
+function answer({ file, target, format, out, mode, lint, previewDir }) {
   if (format !== undefined) return mode === undefined ? measureCopy(file, target, format, out) : writeCopy(file, out, { format, target, mode });
   if (out !== undefined) {
     try {
@@ -38,7 +40,15 @@ function answer({ file, target, format, out, mode, lint }) {
   try {
     const { output, outcome, score } = compress(bytes, target);
     // the size the command will write, mark included, so the warning and the command agree
-    const compressed = outcome === "original" ? bytes.length : mark(keepOrientation(bytes, output)).length;
+    const final = outcome === "original" ? null : mark(keepOrientation(bytes, output));
+    const compressed = final ? final.length : bytes.length;
+    if (previewDir !== undefined && outcome !== "miss" && final && compressed < bytes.length) {
+      try {
+        save(join(previewDir, `${input}${kind(bytes) === "jpeg" ? ".jpg" : ".png"}`), final);
+      } catch {
+        // the measurement still stands; review() writes any preview that couldn't be saved here
+      }
+    }
     return { input, original: bytes.length, compressed, outcome, score, output: key(output, target) };
   } catch (error) {
     return { input, error: plain(error) };

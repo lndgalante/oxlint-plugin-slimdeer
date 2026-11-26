@@ -594,13 +594,15 @@ function viewer(card) {
   pan.addEventListener("scroll", place, { passive: true });
   new ResizeObserver(place).observe(view);
   // a photo turned by its EXIF data shows turned: its box takes the shape the browser gives it
-  before.addEventListener("load", () => {
+  const orient = () => {
     const { naturalWidth: w, naturalHeight: h } = before;
     if (w && h && w * Number(before.getAttribute("height")) !== h * Number(before.getAttribute("width"))) {
       figure.style.setProperty("--w", String(w));
       figure.style.setProperty("--h", String(h));
     }
-  });
+  };
+  if (before.complete) orient();
+  else before.addEventListener("load", orient);
   view.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     const zoomed = figure.classList.contains("zoomed");
@@ -621,18 +623,25 @@ function viewer(card) {
     if (event.pointerType !== "mouse" && !event.target.closest(".divider")) {
       // a finger that moves sideways slides the divider; one that moves up or down scrolls the page
       const from = { x: event.clientX, y: event.clientY };
+      const stop = () => {
+        view.removeEventListener("pointermove", decide);
+        view.removeEventListener("pointerup", stop);
+        view.removeEventListener("pointercancel", stop);
+      };
       const decide = (next) => {
+        if (next.pointerId !== event.pointerId) return;
         const dx = Math.abs(next.clientX - from.x);
         const dy = Math.abs(next.clientY - from.y);
         if (dx < 6 && dy < 6) return;
-        view.removeEventListener("pointermove", decide);
+        stop();
         if (dx > dy) {
           slide(next);
           follow(view, next, "sliding", slide);
         }
       };
       view.addEventListener("pointermove", decide);
-      view.addEventListener("pointercancel", () => view.removeEventListener("pointermove", decide), { once: true });
+      view.addEventListener("pointerup", stop);
+      view.addEventListener("pointercancel", stop);
       return;
     }
     // the arrow keys move it next; its ring is for the keyboard, where browsers take the hint

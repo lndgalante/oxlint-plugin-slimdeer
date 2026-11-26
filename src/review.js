@@ -39,9 +39,20 @@ export async function review(inputs, { cwd = process.cwd(), target, minSavedByte
   const again = `--review${flagged ? " --flagged" : ""}${format ? ` --format ${format}` : ""}`;
   // the local cache, never a --cache-dir that may be committed
   const folder = join(cacheDir(projectRoot(cwd, cwd)), "review");
-  // measuring writes each copy it makes into the folder, as its preview: it has to be there, and not a link
+  // measuring writes each compressed image it makes into the folder, as its preview: it has to be
+  // there, and not a link. Without a format, a folder that can't be made yet (say node_modules is
+  // read-only) still lets measuring report why the cache failed.
+  let previewDir = folder;
   if (format) prepare(folder, cwd, again);
-  const options = { cwd, target, minSavedBytes, minSavedPercent, exclude, cacheDir: customCacheDir, again, ...(format && { format, previewDir: folder }) };
+  else {
+    refuseLink(folder, cwd, again);
+    try {
+      prepare(folder, cwd, again);
+    } catch {
+      previewDir = undefined;
+    }
+  }
+  const options = { cwd, target, minSavedBytes, minSavedPercent, exclude, cacheDir: customCacheDir, again, ...(previewDir && { previewDir }), ...(format && { format }) };
   // an image changed since the lint isn't the one it flagged (summary.js): neither measured nor shown
   const changed = (flagged ?? []).filter((image) => image.changed).map(({ file }) => ({ file, path: pathFrom(cwd, file), message: "changed since the last lint here; lint again to check it" }));
   const lists = flagged ? await measureFlagged(flagged.filter((image) => !image.changed), options) : [{ inputs, settings: options, result: await measureAll(inputs, options) }];
@@ -193,15 +204,25 @@ function none(format) {
  * public/, a home folder), that would be someone's own files, the originals among them, so a link is
  * refused. lstat calls a Windows junction a link too.
  */
+function refuseLink(folder, cwd, again) {
+  let stat;
+  try {
+    stat = lstatSync(folder);
+  } catch {
+    return;
+  }
+  if (stat.isSymbolicLink()) throw new Error(`the review folder ${pathFrom(cwd, folder)} is a link to another folder, which a review would empty: remove the link and run ${again} again`);
+}
+
 function prepare(folder, cwd, again) {
+  refuseLink(folder, cwd, again);
   try {
     mkdirSync(folder, { recursive: true });
   } catch (cause) {
     throw new Error(`can't make the review folder ${pathFrom(cwd, folder)}: ${["EEXIST", "ENOTDIR"].includes(cause.code) ? "a file is in the way" : plain(cause)}`);
   }
-  if (lstatSync(folder).isSymbolicLink()) throw new Error(`the review folder ${pathFrom(cwd, folder)} is a link to another folder, which a review would empty: remove the link and run ${again} again`);
   // kept out of a repository that doesn't ignore node_modules, before any preview goes in (measuring
-  // writes copies there, and a review stopped then leaves them): previews weigh as much as the images
+  // writes previews there, and a review stopped then leaves them): previews weigh as much as the images
   writable(cwd, folder, () => {
     if (!existsSync(join(folder, ".gitignore"))) writeFileSync(join(folder, ".gitignore"), "# slimdeer --review's previews, rewritten on each run\n*\n");
   });
@@ -219,7 +240,6 @@ function prepare(folder, cwd, again) {
  * `error(file, path, message)`, naming `again` where running it again may help.
  */
 async function previews(rows, folder, cwd, again, format, error) {
-  // with a format, review() made it before measuring, which writes the copies into it
   if (!format) prepare(folder, cwd, again);
   const cards = new Map(); // preview name -> its card
   const jobs = new Map(); // preview name -> what writes it, for its card

@@ -107,9 +107,9 @@ test("review writes each preview and a page into the project's cache, and change
     "slimdeer: open it in a browser, untick any image to keep as it is, and run the command it gives.",
     "",
   ]);
-  // measured, then the two previews (the copies share one)
+  // measuring wrote each preview in one pass, so no second compression pass ran
   assert.match(review.stderr, /^slimdeer: measuring 2 images not in the cache yet\.\.\.$/m);
-  assert.match(review.stderr, /^slimdeer: writing 2 previews\.\.\.$/m);
+  assert.doesNotMatch(review.stderr, /writing .*preview/);
   assert.deepEqual(IMAGES.map((image) => sha(join(dir, image))), before);
   // the page, two previews, and what keeps them out of a repository
   assert.equal(readdirSync(folder).length, 4);
@@ -727,6 +727,61 @@ test("the first Tab on the page offers to skip every card's controls to the comm
   assert.match(html, /<pre id="command" tabindex="0"/);
 });
 
+test("viewer fixes an already-loaded EXIF-rotated photo's aspect ratio and cleans up touch tap listeners", () => {
+  const html = page(model([card("photo.jpg", { width: 800, height: 600 })]));
+  const context = vm.createContext({ ResizeObserver: class { observe() {} } });
+  vm.runInContext(parse(html).script, context);
+  const emitter = () => {
+    const map = new Map();
+    return {
+      listeners: map,
+      addEventListener(type, fn) {
+        if (!map.has(type)) map.set(type, new Set());
+        map.get(type).add(fn);
+      },
+      removeEventListener(type, fn) {
+        map.get(type)?.delete(fn);
+      },
+      emit(type, event) {
+        for (const fn of new Set(map.get(type))) fn(event);
+      },
+    };
+  };
+  const props = new Map();
+  const figure = {
+    classList: { contains: () => false, toggle: () => {} },
+    style: { setProperty: (k, v) => props.set(k, v) },
+    querySelector: (sel) => (sel === ".view" ? view : null),
+  };
+  const view = {
+    ...emitter(),
+    classList: { add: () => {}, remove: () => {} },
+    style: { setProperty: () => {} },
+    setPointerCapture: () => {},
+    querySelector: (sel) => ({ ".pan": pan, ".before": before, ".slider": slider })[sel],
+  };
+  const pan = { ...emitter(), clientWidth: 400, scrollLeft: 0, scrollTop: 0, scrollWidth: 400, scrollHeight: 300, getBoundingClientRect: () => ({ left: 0 }) };
+  const before = { ...emitter(), complete: true, naturalWidth: 600, naturalHeight: 800, getAttribute: (name) => ({ width: "800", height: "600" })[name] };
+  const slider = { ...emitter(), value: "50", setAttribute: () => {}, focus: () => {} };
+  const radio = { ...emitter(), value: "0", checked: true };
+  const cardEl = { querySelector: (sel) => (sel === ".compare" ? figure : null), querySelectorAll: () => [radio] };
+
+  context.viewer(cardEl);
+  assert.deepEqual([props.get("--w"), props.get("--h")], ["600", "800"]);
+  assert.equal(before.listeners.get("load")?.size ?? 0, 0);
+
+  // a touch tap (pointerdown then pointerup without dragging) leaves no dangling listeners
+  const target = { closest: () => null };
+  view.emit("pointerdown", { button: 0, pointerType: "touch", pointerId: 1, clientX: 100, clientY: 100, target });
+  assert.equal(view.listeners.get("pointermove")?.size, 1);
+  assert.equal(view.listeners.get("pointerup")?.size, 1);
+  assert.equal(view.listeners.get("pointercancel")?.size, 1);
+  view.emit("pointerup", { pointerId: 1 });
+  assert.equal(view.listeners.get("pointermove")?.size, 0);
+  assert.equal(view.listeners.get("pointerup")?.size, 0);
+  assert.equal(view.listeners.get("pointercancel")?.size, 0);
+});
+
 test("--open asks the system's opener for the page, with no shell to read the path", () => {
   const file = "/work/R&D 100%/node_modules/.cache/slimdeer/review/index.html";
   assert.deepEqual(opener(file, "darwin"), { command: "open", args: [file] });
@@ -829,21 +884,33 @@ function screen(text, columns) {
 // script(1) gives the command a terminal (a pty): Windows has none
 test("on a narrow terminal, the measuring and preview counts leave no rows behind", { skip: process.platform === "win32" }, (t) => {
   const narrow = project({ images: [BALL, "public/unused-fire.png"] });
-  const out = join(narrow, "terminal.txt");
-  const command = `stty cols 30 rows 50; exec ${[process.execPath, join(plugin, "bin/slimdeer.js"), "--review"].map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ")}`;
-  // util-linux's script(1) takes the command with -c, BSD's (macOS) after the file
-  const flags = process.platform === "linux" ? ["-q", "-c", command, out] : ["-q", out, "sh", "-c", command];
-  // no input: macOS's script(1) fails asking a pipe for its terminal settings
-  const run = spawnSync("script", flags, { cwd: narrow, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 300_000 });
-  if (run.error?.code === "ENOENT") return t.skip("no script(1) to give the command a terminal");
-  assert.equal(run.status, 0, run.stderr);
-  const text = readFileSync(out, "utf8");
-  // both counts ran, each wider than the terminal
-  assert.match(text, /\rslimdeer: measuring 2 images\.\.\. 2\/2, could save /);
-  assert.match(text, /\rslimdeer: writing 2 previews\.\.\. 2\/2/);
-  const rows = screen(text, 30);
-  assert.ok(rows.some((row) => row.startsWith("slimdeer: the page that compar")), rows.join("\n"));
-  assert.deepEqual(rows.filter((row) => /measuring|writing/.test(row)), []);
+  const runNarrow = (out) => {
+    const command = `stty cols 30 rows 50; exec ${[process.execPath, join(plugin, "bin/slimdeer.js"), "--review"].map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ")}`;
+    // util-linux's script(1) takes the command with -c, BSD's (macOS) after the file
+    const flags = process.platform === "linux" ? ["-q", "-c", command, out] : ["-q", out, "sh", "-c", command];
+    // no input: macOS's script(1) fails asking a pipe for its terminal settings
+    return spawnSync("script", flags, { cwd: narrow, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 300_000 });
+  };
+  const first = join(narrow, "measuring.txt");
+  const run1 = runNarrow(first);
+  if (run1.error?.code === "ENOENT") return t.skip("no script(1) to give the command a terminal");
+  assert.equal(run1.status, 0, run1.stderr);
+  const measured = readFileSync(first, "utf8");
+  assert.match(measured, /\rslimdeer: measuring 2 images\.\.\. 2\/2, could save /);
+  const rows1 = screen(measured, 30);
+  assert.ok(rows1.some((row) => row.startsWith("slimdeer: the page that compar")), rows1.join("\n"));
+  assert.deepEqual(rows1.filter((row) => /measuring|writing/.test(row)), []);
+
+  // with measurements cached and previews gone, the preview count runs on its own
+  rmSync(join(cacheDir(narrow), "review"), { recursive: true, force: true });
+  const second = join(narrow, "writing.txt");
+  const run2 = runNarrow(second);
+  assert.equal(run2.status, 0, run2.stderr);
+  const written = readFileSync(second, "utf8");
+  assert.match(written, /\rslimdeer: writing 2 previews\.\.\. 2\/2/);
+  const rows2 = screen(written, 30);
+  assert.ok(rows2.some((row) => row.startsWith("slimdeer: the page that compar")), rows2.join("\n"));
+  assert.deepEqual(rows2.filter((row) => /measuring|writing/.test(row)), []);
 });
 
 test("a review folder that is a link is left as it is, and so is every file where it leads", (t) => {

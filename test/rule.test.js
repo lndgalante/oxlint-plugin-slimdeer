@@ -175,16 +175,27 @@ test("paths with spaces are found and quoted for the platform's shell", () => {
 });
 
 test("%-escaped paths resolve as a browser reads them", () => {
-  // in a srcSet, %20 is the only way to write a space; a malformed escape is just a path not found
-  const files = { "src/App.jsx": 'export const a = <img srcSet="/my%20ball.png 1x, /bad%zz.png 2x" />;\n' };
+  // in a srcSet, %20 is the only way to write a space; reserved chars (#, &, +) are %-escaped too,
+  // while %2F stays in the name rather than becoming a folder and a malformed escape is just not found
+  const files = {
+    "src/App.jsx": [
+      'export const a = <img srcSet="/my%20ball.png 1x, /bad%zz.png 2x" />;',
+      'export const b = "/me%20%26%20you.png";',
+      'export const c = "/photo%231%2B2.png";',
+      'export const d = "/sub%2Fhidden.png";',
+      "",
+    ].join("\n"),
+  };
   const dir = project({ files, images: [] });
-  mkdirSync(join(dir, "public"));
-  cpSync(new URL("../example/src/assets/crystal-ball.png", import.meta.url), join(dir, "public/my ball.png"));
-  const { found } = oxlint(dir);
-  assert.equal(found.length, 1);
-  assert.match(found[0].message, /^my ball\.png could be \d+% smaller/);
-  assert.ok(found[0].message.endsWith(" 'public/my ball.png'"), found[0].message);
-  assert.deepEqual([found[0].labels[0].span.column, found[0].labels[0].span.length], [31, 14]);
+  mkdirSync(join(dir, "public/sub"), { recursive: true });
+  const ball = new URL("../example/src/assets/crystal-ball.png", import.meta.url);
+  for (const name of ["my ball.png", "me & you.png", "photo#1+2.png", "sub/hidden.png"]) cpSync(ball, join(dir, "public", name));
+  const result = oxlint(dir);
+  assert.deepEqual(result.found.map((d) => d.message.split(" could be ")[0]).sort(), ["me & you.png", "my ball.png", "photo#1+2.png"]);
+  const myBall = result.found.find((d) => d.message.startsWith("my ball.png "));
+  assert.match(myBall.message, /^my ball\.png could be \d+% smaller/);
+  assert.ok(myBall.message.endsWith(" 'public/my ball.png'"), myBall.message);
+  assert.deepEqual([myBall.labels[0].span.column, myBall.labels[0].span.length], [31, 14]);
 });
 
 test("srcSet lists, public and static paths resolve, each image underlined on its own", () => {

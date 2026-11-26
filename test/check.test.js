@@ -170,6 +170,20 @@ test("a grayscale PNG with a color profile below the byte threshold is skipped, 
   assert.equal(check(dir, "pointer.png").status, 2);
 });
 
+test("a CMYK JPEG is skipped below the byte threshold, and above it --check suggests --exclude", () => {
+  const header = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x14, 0x08, 0x00, 0x10, 0x00, 0x10, 0x04, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0, 0xff, 0xda, 0x00, 0x02]);
+  const small = Buffer.concat([header, Buffer.from([0xff, 0xd9])]);
+  const big = Buffer.concat([header, Buffer.alloc(5000), Buffer.from([0xff, 0xd9])]);
+  const dir = project({ images: [], files: { "small.jpg": small, "public/cmyk.jpg": big } });
+  const tiny = check(dir, "small.jpg");
+  assert.equal(tiny.status, 0, tiny.stderr);
+  assert.equal(tiny.stderr, "");
+  const walk = check(dir);
+  assert.equal(walk.status, 2, walk.stdout);
+  assert.match(walk.stderr, /^public\/cmyk\.jpg: a CMYK JPEG \(convert it to RGB\)$/m);
+  assert.match(walk.stdout, /^slimdeer: 1 file slimdeer can't take \(see above\); to leave it out, run: npx oxlint-plugin-slimdeer --check --exclude public\/cmyk\.jpg$/m);
+});
+
 test("check uses package-relative exclusions even when scanning a subdirectory", () => {
   const dir = project({ images: ["src/assets/crystal-ball.png", "public/photo.jpg"] });
   let run = check(dir, "src/assets", "--exclude", "src/assets/**");

@@ -288,7 +288,7 @@ export function summarize(cwd = process.cwd()) {
   const shownUnnamed = unnamed.slice(0, UNNAMED_ROWS);
   // the unnamed images say where they're named, as no warning can point there
   const places = unnamed.slice(0, report ? REPORT_UNNAMED_ROWS : UNNAMED_ROWS).map(place);
-  const row = ([file, { original, compressed, score }]) => [pathFrom(cwd, file), size(original), size(compressed), size(original - compressed), String(Math.round(score))];
+  const row = ([file, entry]) => [pathFrom(cwd, file), size(entry.original), size(entry.compressed), size(entry.original - entry.compressed), quality(entry)];
   const header = ["image", "now", "after", "saves", "quality"];
   const rows = [header, ...images.slice(0, ROWS).map(row), ...shownUnnamed.map((image, i) => [...row(image), said(cwd, places[i])])];
   const width = (column) => Math.max(...rows.map((cells) => columns(cells[column] ?? "")));
@@ -379,6 +379,11 @@ export function summarize(cwd = process.cwd()) {
   }
 }
 
+/** How an entry's quality reads in a summary table: "lossless" for a lossless result, else its rounded score. */
+function quality({ outcome, score }) {
+  return outcome === "lossless" || outcome === "exact" ? "lossless" : String(Math.round(score));
+}
+
 /** What `images` ([path, entry]) add up to: the bytes saved, and before → after. */
 function total(images) {
   const original = images.reduce((sum, [, image]) => sum + image.original, 0);
@@ -434,7 +439,7 @@ function markdown(cwd, { images, unnamed, places, held, says, incomplete }) {
     blocks.push("This lint is incomplete: slimdeer stopped measuring before it had measured every image, so these totals leave some out. Run it again to carry on, and keep the cache between CI runs (`settings.slimdeer.cacheDir`).");
   }
   const header = ["Image", "Now", "After", "Saves", "Quality"];
-  const cells = ([file, { original, compressed, score }]) => [code(pathFrom(cwd, file)), size(original), size(compressed), size(original - compressed), String(Math.round(score))];
+  const cells = ([file, entry]) => [code(pathFrom(cwd, file)), size(entry.original), size(entry.compressed), size(entry.original - entry.compressed), quality(entry)];
   const more = (list, shown) => `…and ${count(list.length - shown, "more image")}, ${total(list.slice(shown)).saved} in all.`;
   if (images.length) {
     blocks.push(`${capital(says.flagged)}:`, table(header, images.slice(0, REPORT_ROWS).map(cells)));
@@ -533,7 +538,7 @@ function namedIn(imageRoot, image, publicDirs = []) {
     // every path ends in the name, so only files that hold it need a closer look
     const candidates = pagesOf(root).filter(({ text }) => names.some((spelling) => text.includes(spelling)));
     const page =
-      candidates.find(({ path, text }) => paths(path).some((spelling) => holds(text, spelling))) ??
+      candidates.find(({ path, text }) => paths(path).some((spelling) => holdsPath(text, spelling))) ??
       candidates.find(({ text }) => names.some((spelling) => holds(text, spelling)));
     if (page) return page.path;
   }
@@ -544,6 +549,19 @@ function namedIn(imageRoot, image, publicDirs = []) {
 export function holds(text, path) {
   for (let at = text.indexOf(path); at >= 0; at = text.indexOf(path, at + 1)) {
     if (at === 0 || !/[\w.-]/.test(text[at - 1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `text` names a file by `spelling`, a path from the file or the project: a bare name only
+ * alone, or after "/" or "./" that start a path, as "img/hero.png" names another hero.png.
+ */
+export function holdsPath(text, spelling) {
+  if (spelling.includes("/")) return holds(text, spelling);
+  for (let at = text.indexOf(spelling); at >= 0; at = text.indexOf(spelling, at + 1)) {
+    const start = at >= 2 && text.startsWith("./", at - 2) ? at - 2 : text[at - 1] === "/" ? at - 1 : at;
+    if (start === 0 || !/[\w./-]/.test(text[start - 1])) return true;
   }
   return false;
 }

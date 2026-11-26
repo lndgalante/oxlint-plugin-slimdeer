@@ -88,12 +88,17 @@ test("the summary points at the file that names an image's path, and not at a lo
     "public/logo.png": image,
     "public/team photo.png": image,
     "src/team.html": '<img src="/team%20photo.png">\n',
+    // a sibling file names img/hero.png, not the hero.png right beside it
+    "public/hero.png": image,
+    "public/wrong.css": ".hero { background: url(img/hero.png); }\n",
+    "src/right.html": '<img src="/hero.png">\n',
   };
   const dir = project({ images: [], files });
-  const stderr = await summaryIn(t, dir, ["blog/post/img/social-card.png", "public/logo.png", "public/team photo.png"]);
+  const stderr = await summaryIn(t, dir, ["blog/post/img/social-card.png", "public/logo.png", "public/team photo.png", "public/hero.png"]);
   assert.match(stderr, /^  blog\/post\/img\/social-card\.png .* used in blog\/post\/index\.mdx$/m);
   assert.match(stderr, /^  public\/logo\.png .* nothing names it$/m);
   assert.match(stderr, /^  public\/team photo\.png .* used in src\/team\.html$/m);
+  assert.match(stderr, /^  public\/hero\.png .* used in src\/right\.html$/m);
 });
 
 test("Next.js metadata images aren't called unused in a project that depends on next", async (t) => {
@@ -485,4 +490,23 @@ test("oxlint in GitHub Actions writes the job summary", (t) => {
   inActions(t, file);
   oxlintSummary(dir);
   assert.match(readFileSync(file, "utf8"), /^\| `src\/assets\/crystal-ball\.png` \| 35 kB \| 11 kB \| 24 kB \| 87 \|$/m);
+});
+
+test("lossless results read 'lossless' in the summary and job summary, and backticks in a file name don't break a fenced command", async (t) => {
+  const dir = project({ images: ["src/assets/crystal-ball.png"], files: { "src/app.js": 'import ball from "./assets/crystal-ball.png";\n' }, options: { measure: "never", scan: "referenced" } });
+  const bytes = readFileSync(join(dir, "src/assets/crystal-ball.png"));
+  write(cacheDir(dir), key(bytes), { original: bytes.length, compressed: 11000, outcome: "lossless", score: 100 });
+  const file = join(dir, "summary.md");
+  inActions(t, file);
+  const stderr = oxlintSummary(dir);
+  assert.match(stderr, /^  src\/assets\/crystal-ball\.png .* lossless$/m);
+  assert.match(readFileSync(file, "utf8"), /^\| `src\/assets\/crystal-ball\.png` \| 35 kB \| 11 kB \| 24 kB \| lossless \|$/m);
+
+  // a file name with triple backticks gets a four-backtick fence in the preview command block
+  const fenced = join(dir, "fenced.md");
+  inActions(t, fenced);
+  await summaryIn(t, dir, [], [], { flagged: [["public/a```b.png", { ...saving(9000, 100), outcome: "exact" }]] });
+  const markdown = readFileSync(fenced, "utf8");
+  assert.match(markdown, /^\| ````public\/a```b\.png```` \| 100 kB \| 91 kB \| 9\.0 kB \| lossless \|$/m);
+  assert.match(markdown, /\n````\nnpx oxlint-plugin-slimdeer 'public\/a```b\.png' -o 'a```b\.preview\.png'\n````\n/);
 });

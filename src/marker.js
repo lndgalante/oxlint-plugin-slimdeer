@@ -6,7 +6,7 @@
 // about another fifth each time, so the rule never measures a marked file, and a file edited since
 // (its size no longer matching) is measured again.
 import { crc32 } from "node:zlib";
-import { kind, pngChunk } from "./images.js";
+import { jpegSegments, kind, pngChunk } from "./images.js";
 
 const LABEL = /^(?:pngdeer|slimdeer) (\d+)$/;
 
@@ -18,7 +18,10 @@ export function mark(bytes) {
   if (type === "jpeg") {
     // a COM segment after SOI and the APPn segments, which JFIF and Exif readers expect first
     let pos = 2;
-    while (pos + 4 <= bytes.length && bytes[pos] === 0xff && bytes[pos + 1] >= 0xe0 && bytes[pos + 1] <= 0xef) pos += 2 + ((bytes[pos + 2] << 8) | bytes[pos + 3]);
+    for (const { marker, end } of jpegSegments(bytes)) {
+      if (marker < 0xe0 || marker > 0xef) break;
+      pos = end;
+    }
     const segment = Buffer.alloc(4 + text.length);
     segment.writeUInt16BE(0xfffe, 0);
     segment.writeUInt16BE(2 + text.length, 2);
@@ -80,9 +83,9 @@ function afterHeader(png, type, data) {
 /** Whether `bytes` carry the mark, and haven't changed size since. */
 export function marked(bytes) {
   const type = kind(bytes);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const matches = (text, added) => Number(LABEL.exec(text)?.[1]) === bytes.length - added;
   if (type === "png") {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     for (let pos = 8; pos + 12 <= bytes.length; pos += 12 + view.getUint32(pos)) {
       const chunk = String.fromCharCode(...bytes.subarray(pos + 4, pos + 8));
       if (chunk === "IDAT" || chunk === "IEND") break;
@@ -93,10 +96,8 @@ export function marked(bytes) {
       }
     }
   } else if (type === "jpeg") {
-    // the segments before the scan (SOS), each FF xx and a length that counts itself
-    for (let pos = 2; pos + 4 <= bytes.length && bytes[pos] === 0xff && bytes[pos + 1] !== 0xda; pos += 2 + view.getUint16(pos + 2)) {
-      const length = view.getUint16(pos + 2);
-      if (bytes[pos + 1] === 0xfe && matches(Buffer.from(bytes.subarray(pos + 4, pos + 2 + length)).toString("latin1"), 2 + length)) return true;
+    for (const { marker, data } of jpegSegments(bytes)) {
+      if (marker === 0xfe && matches(Buffer.from(data).toString("latin1"), 4 + data.length)) return true;
     }
   }
   return false;

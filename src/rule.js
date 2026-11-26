@@ -25,6 +25,8 @@ const DEFAULTS = { minSavedBytes: 4096, minSavedPercent: 10, target: "auto", mea
 const ALIASES = { "@/": "src/", "~/": "src/" };
 // a CSS url() argument, quoted or not: background: url("/bg.png") center / cover
 const URL_ARGUMENT = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s"'()]+))\s*\)/gi;
+// an HTML srcSet descriptor: a width ("400w") or pixel density ("1.5x")
+const DESCRIPTOR = /^(?:\d+w|(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?x)$/i;
 // the modules whose default export renders an image through Next.js's optimizer
 const NEXT_IMAGE = new Set(["next/image", "next/legacy/image", "next/future/image"]);
 const NEXT_CONFIGS = ["next.config.js", "next.config.mjs", "next.config.cjs", "next.config.ts", "next.config.mts"];
@@ -211,7 +213,7 @@ export default {
       // folder it was measured into, unless it's the one --review --flagged reads by default, the
       // image's own package's local one: the settings name another, or the image is another package's
       const measuredIn = dir === cacheDir(projectRoot(dirname(file), context.cwd)) ? undefined : dir;
-      if (!EDITOR && !kept(line)) flag(file, from, { original: result.original, compressed: result.compressed, score: result.score, target, key: k, cacheDir: measuredIn });
+      if (!EDITOR && !kept(line)) flag(file, from, { original: result.original, compressed: result.compressed, outcome: result.outcome, score: result.score, target, key: k, cacheDir: measuredIn });
       // this package's own command (bin/slimdeer.js), at the target measured, so it writes exactly the
       // file this promises; named by the package, so npx can't fetch someone else's
       const command = shrinkCommand([shown(file)], target);
@@ -462,10 +464,14 @@ function imagesIn(text, find) {
   // with its query or hash; but a srcSet whose first candidate has one goes on after it.
   const files = usable(whole) && !/[\s,]/.test(trimmed.slice(whole.length)) ? find(whole) : [];
   if (files.length) return files.map((file) => ({ file, part: null }));
-  const candidates = text
+  const parts = text
     .split(",")
-    .map((part) => part.trim().split(/\s+/)[0])
-    .flatMap((part) => filesOf(part, find));
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.split(/\s+/));
+  const candidates = parts.every((tokens) => tokens.length === 1 || (tokens.length === 2 && DESCRIPTOR.test(tokens[1])))
+    ? parts.flatMap(([part]) => filesOf(part, find))
+    : [];
   return candidates.length ? candidates : urlsIn(text, find);
 }
 
@@ -661,8 +667,8 @@ function mtimeOf(path) {
 /** `path` with its %-escapes decoded, as a browser or server reads a URL; as it is if one is malformed. */
 function decoded(path) {
   try {
-    // not decodeURIComponent: "%2F" stays in the name rather than becoming a folder
-    return decodeURI(path);
+    // keep encoded path separators (%2F, %5C) from turning into folders
+    return path.replace(/(?:%(?!2f|5c)[0-9a-f]{2})+/gi, decodeURIComponent);
   } catch {
     return path;
   }

@@ -103,3 +103,12 @@ test("trailing commas are removed without changing commas in quoted paths", () =
     "tsconfig.json": '{ "compilerOptions": { "paths": { "@/*": ["./assets,}/*",], }, }, }',
   }), { "@/": "assets,}/" });
 });
+
+test("references keep looking past a config whose paths define no folder aliases", () => {
+  const files = {
+    "tsconfig.json": { files: [], references: [{ path: "./tsconfig.node.json" }, { path: "./tsconfig.app.json" }] },
+    "tsconfig.node.json": { compilerOptions: { paths: { "vite-env": ["./env.d.ts"] } } },
+    "tsconfig.app.json": { compilerOptions: { paths: { "@/*": ["./src/*"] } } },
+  };
+  assert.deepEqual(aliases(files), { "@/": "src/" });
+});

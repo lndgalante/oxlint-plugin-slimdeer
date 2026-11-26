@@ -16,10 +16,10 @@ export function table(header, rows) {
 /** Text as Markdown code: fenced past any backticks in it, with control characters, which would break a line or a table, replaced. */
 export function code(text) {
   const plain = printable(text);
-  const fence = "`".repeat(Math.max(0, ...(plain.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  const ticks = fence(plain);
   // Markdown takes one space off each end of code, which a space or backtick at either end needs
   const space = /^[ `]|[ `]$/.test(plain) ? " " : "";
-  return `${fence}${space}${plain}${space}${fence}`;
+  return `${ticks}${space}${plain}${space}${ticks}`;
 }
 
 /**
@@ -30,9 +30,15 @@ export function prose(text) {
   return printable(text).replace(/[\\`*_[\]()<>!~&$]/g, "\\$&");
 }
 
-/** A command in a block of its own, which GitHub gives a copy button. */
+/** A command in a block of its own, fenced past any backticks in it, which GitHub gives a copy button. */
 export function block(text) {
-  return `\`\`\`\n${printable(text)}\n\`\`\``;
+  const plain = printable(text);
+  const ticks = fence(plain, 3);
+  return `${ticks}\n${plain}\n${ticks}`;
+}
+
+function fence(text, min = 1) {
+  return "`".repeat(Math.max(min - 1, ...(text.match(/`+/g) ?? []).map((run) => run.length)) + 1);
 }
 
 /**

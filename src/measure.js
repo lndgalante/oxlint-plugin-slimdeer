@@ -34,11 +34,12 @@ const NOT_MEASURED = "not measured: ";
  * - counts: { checked, measured, cached, skipped, packages };
  * - builds: [{ path, images }], Gatsby build folders left out, and how many images they hold.
  * An error that running it again may clear names `again`, the run to repeat (--review's, say).
+ * With `previewDir` (a folder the caller made, not a link), each image measured here that slimdeer
+ * shrinks (without `format`, the marked shrink; with `format`, each copy that reaches its target) is
+ * also written there, named by its cache key and extension.
  *
  * With `format` ("webp", "avif"), each image is then measured as that format at its equal target
- * (convert.js), the results kept in its project's local cache folder alone; with `previewDir` too (a
- * folder the caller made, not a link), each copy measured that reaches its target is also written
- * there, named by its cache key and the format's extension. Resolves { format, rows, notWorthIt,
+ * (convert.js), the results kept in its project's local cache folder alone. Resolves { format, rows, notWorthIt,
  * leftOut, missed, declined, errors, counts, builds }, the last four as without `format`, except that
  * an image whose copy this run measured counts as measured:
  * - rows: [{ file, path, root, type, target, equal, original, compressed, score, sameFormat, base,
@@ -108,7 +109,7 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
       error(file, cause);
     }
   }
-  await measure(groups, { target, format, minSavedBytes, minSavedPercent }, counts, cached);
+  await measure(groups, { target, format, minSavedBytes, minSavedPercent, previewDir: format ? undefined : previewDir }, counts, cached);
 
   const rows = [];
   const declined = [];
@@ -204,11 +205,11 @@ export async function measureAll(inputs, { cwd = process.cwd(), target, minSaved
  * Notes on each group why it couldn't be measured, if so. With `format`, adds to `cached` the images
  * the batch counted as cached.
  */
-async function measure(groups, { target, format, minSavedBytes, minSavedPercent }, counts, cached) {
+async function measure(groups, { target, format, minSavedBytes, minSavedPercent, previewDir }, counts, cached) {
   const requests = new Map(); // request -> its group: fillAll() names a request it left out
   for (const group of groups.values()) {
     const pending = group.images.filter((image) => !image.entry);
-    if (pending.length) requests.set({ dir: group.dir, failures: group.local, target, files: pending.map(({ file }) => file), minSavedBytes, minSavedPercent }, group);
+    if (pending.length) requests.set({ dir: group.dir, failures: group.local, target, files: pending.map(({ file }) => file), minSavedBytes, minSavedPercent, ...(previewDir !== undefined && { previewDir }) }, group);
   }
   if (requests.size === 0) return;
   // the batch says it once it holds the locks, counting copies of one image once and leaving out what

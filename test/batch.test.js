@@ -10,6 +10,7 @@ import { Worker } from "node:worker_threads";
 import { fill, fillAll, fillConversions, lock, peakOf, pool } from "../src/batch.js";
 import { convertKey, key, read } from "../src/cache.js";
 import { convert } from "../src/engine.js";
+import { dimensions } from "../src/images.js";
 import { animate, fade, gradient, plugin, project } from "./helpers.js";
 
 const batch = JSON.stringify(pathToFileURL(join(plugin, "src", "batch.js")).href);
@@ -374,10 +375,37 @@ test("progress hears which image finished and what it could save, by the request
   assert.ok(files.every((file) => heard.get(file).request === request));
 });
 
-test("an engine is expected to need more memory for an AVIF than for a PNG, JPEG or WebP", () => {
+test("finished lanes terminate their engines before slower lanes finish", async (t) => {
+  machine(t, { availableParallelism: 2 });
+  const dir = project({ images: ["src/assets/crystal-ball.png"] });
+  const fast = join(dir, "missing.png");
+  const slow = join(dir, "src/assets/crystal-ball.png");
+  let terminated = 0;
+  let beforeSlowDone = 0;
+  const terminate = Worker.prototype.terminate;
+  t.mock.method(Worker.prototype, "terminate", function () {
+    terminated++;
+    return terminate.call(this);
+  });
+  const jobs = [
+    { size: 100, peak: 60e6, message: { file: fast } },
+    { size: readFileSync(slow).length, peak: 60e6, message: { file: slow } },
+  ];
+  await pool(jobs, {
+    done: (job) => {
+      if (job.message.file === slow) beforeSlowDone = terminated;
+    },
+  });
+  assert.equal(beforeSlowDone, 1);
+});
+
+test("an engine is expected to need more memory for a PNG than a JPEG, and more base memory for an AVIF", () => {
   const png = gradient(32);
-  assert.equal(peakOf(png), 50e6 + 32 * 32 * 125);
-  assert.equal(peakOf(png, "webp"), peakOf(png));
+  const jpeg = readFileSync(new URL("../example/public/photo.jpg", import.meta.url));
+  const [w, h] = dimensions(jpeg, "jpeg");
+  assert.equal(peakOf(png), 50e6 + 32 * 32 * 180);
+  assert.equal(peakOf(png, "webp"), 50e6 + 32 * 32 * 125);
+  assert.equal(peakOf(jpeg), 50e6 + w * h * 125);
   assert.equal(peakOf(png, "avif"), 70e6 + 32 * 32 * 150);
   // every frame
   assert.equal(peakOf(animate(png), "avif"), 70e6 + 32 * 32 * 2 * 150);
