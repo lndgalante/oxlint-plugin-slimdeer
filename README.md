@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/.github/logo.svg" alt="" width="128" height="128">
+  <img src="https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/.github/logo.svg" alt="" width="80" height="80">
 </p>
 
 <h1 align="center">oxlint-plugin-slimdeer</h1>
@@ -11,39 +11,59 @@
   <a href="https://github.com/lndgalante/oxlint-plugin-slimdeer/actions/workflows/ci.yml"><img src="https://github.com/lndgalante/oxlint-plugin-slimdeer/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
 </p>
 
-A lint rule for [oxlint](https://oxc.rs/docs/guide/usage/linter) and ESLint. It runs [slimdeer](https://github.com/heydeer/slimdeer), HeyDeer's open-source lossy image compressor, on your project's PNGs and JPEGs, in memory and on your machine. Then it warns, on the line of code that names an image, when that image could be at least 4 KiB and 10% smaller at about the same visual quality:
-
-![VS Code with the Oxc extension: "/hero.png" in App.jsx is underlined, and the hover says hero.png could be 70% smaller (509 kB → 151 kB) and gives the command that shrinks it](https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/docs/images/editor.png)
-
-This plugin isn't made by HeyDeer; it runs their MIT-licensed engine.
+An image lint rule for [oxlint](https://oxc.rs/docs/guide/usage/linter) and ESLint. It measures your project's PNGs and JPEGs on your machine with [slimdeer](https://github.com/heydeer/slimdeer), HeyDeer's open-source lossy compressor, and warns where your JS or TS code uses one that could be at least 4 KiB and 10% smaller at about the same visual quality. It only reports: it uploads nothing and changes no image, and a separate command shrinks the ones you choose. This plugin isn't made by HeyDeer; it runs their MIT-licensed engine.
 
 ## Try it on your images
 
-From your project's folder, with no setup:
-
 ```bash
-npx oxlint-plugin-slimdeer --review
+npx oxlint-plugin-slimdeer --review --open
 ```
 
-It writes a page that shows each image before and after, with the command that shrinks the ones you keep ticked. It changes no image and uploads nothing. Shrinking is lossy, so commit before you run that command. On this repository's example app, it shows 5 images that could be 70% smaller in all (1.0 MB → 317 kB). Their quality scores run from 76 to 90 out of 100, where 80 and up looks the same side by side.
-
-The first run takes a few seconds per image, several at a time, and later runs read the cache. The cache and the page go in `node_modules/.cache/slimdeer`. It needs Node 20.19+ or 22.12+.
+No setup: run it from your project's folder. It changes no image: it opens a page that shows each one that could be smaller, before and after, or says that none could. Working through a coding agent? There is a prompt to paste below.
 
 ![The command's review page in a browser: public/hero.png, an arcade stick, split by a divider into before (509 kB) and after (151 kB), with "Quality 87/100: looks the same side by side" and Fit, 100% and 200% buttons. The bar at the bottom says "5 of 5 images ticked: could save 723 kB (1.0 MB → 317 kB, 70% smaller)" above the command that shrinks them and a Copy button](https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/docs/images/review.png)
 
-- Drag the divider across an image, or switch from Fit to 100% or 200% to see the pixels. Each "after" is the file the command writes, byte for byte.
-- Untick an image to keep it as it is, or press "Untick quality below 80". The bar gives the command for the rest; run it in the same folder. The lint still warns on an image you keep until you add it to the rule's [`exclude` option](#options).
-- The command prints the page's address. Add `--open` to open it in your browser.
+`npx oxlint-plugin-slimdeer --check` prints the same list in the terminal ([more](#check-without-a-linter)). On this repository's example app (shortened):
 
-Prefer the terminal? `npx oxlint-plugin-slimdeer --check` lists the same images, then the commands that review and shrink them ([below](#check-without-a-linter)).
+```
+…
+public/photo.jpg: could be 64% smaller (235 kB → 85 kB, quality 76/100: looks close, with differences you might spot side by side)
+src/assets/diagram.png: could be 75% smaller (248 kB → 63 kB, quality 90/100: looks identical)
+public/hero.png: could be 70% smaller (509 kB → 151 kB, quality 87/100: looks the same side by side)
+slimdeer: 5 images could be 723 kB smaller (1.0 MB → 317 kB, 70% smaller). Images unchanged.
+```
 
-As WebP or AVIF? `npx oxlint-plugin-slimdeer --review --format webp` (or `--format avif`) compares the same images as copies in that format, at the same quality scores, and shows the ones worth writing. Its command writes each copy next to its original, which stays, and lists the lines of code that still name the original: the saving starts once they name the copy ([WebP and AVIF](#webp-and-avif)).
+The score is [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), a perceptual metric out of 100; the words after it are how the tool reads it. JPEG photos often land in the 70s, like `photo.jpg` here: look at those first, or review them alone at a higher target, as in `--review public/photo.jpg --target 90`.
 
-Savings vary by image. On pinned copies of three public projects' images, `--check` flagged all 19 of the Vue docs' guide images (74% smaller in all, 1.2 MB → 316 kB) and 4 of the Docusaurus starter's 5 (53% smaller in all), but only 2 of Starlight's 12 small portraits (7% smaller in all). On [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), the 0–100 perceptual score each warning shows, 21 of those 25 scored 89 or more, and 4 scored 73 to 78, which the rule calls "close, with differences you might spot side by side". These are repository bytes: an image pipeline or CDN may already re-encode what users download. [The trials](https://github.com/lndgalante/oxlint-plugin-slimdeer/blob/main/bench/TRIALS.md)
+- **Where it pays:** images served as committed (plain `<img>`, CSS backgrounds, share images, `public/` in Vite and Astro). Behind `next/image`, Astro's `<Image>` or an image CDN, shrinking mostly saves repository and build size and adds a second lossy pass: leave those folders out with [`exclude`](#options).
+- **Using ESLint?** ESLint 9 and 10 run the same rule, without oxlint ([quick start](#quick-start-with-eslint)).
+- **Shrinking is lossy, so commit first.** File names and formats stay the same, so no code changes.
+- **On the page**, untick any image to keep as it is, then run the command it gives. Each "after" is the file that command writes, byte for byte.
+- **The first run** takes a few seconds per image (a full-size camera photo can take a minute or two), and later runs read the cache. In a big project, start with one folder, like `--review public`. The cache and the page go in `node_modules/.cache/slimdeer`. It needs Node 20.19+ or 22.12+.
+- **WebP or AVIF?** The command also writes copies in those formats, compared at the same quality scores ([WebP and AVIF](#webp-and-avif)).
+
+**Working through a coding agent?** Paste this, or install [the skill](#for-coding-agents), which also sets up the lint rule:
+
+```text
+Check this project's images with oxlint-plugin-slimdeer (lossy, runs on this machine,
+uploads nothing). Change no image.
+1. Run `npx --yes oxlint-plugin-slimdeer --check --json`. It can take a few seconds per
+   image. Exit code 1 means it lists images, not that it failed.
+2. Tell me the total and the biggest savings (up to 10): path, size now and after,
+   quality score. Point out any that score below 80.
+3. Run `npx --yes oxlint-plugin-slimdeer --review`, give me the address it prints, if any,
+   and stop.
+```
+
+**In use:** [Kalia](https://kalia.app) reports about 370 images shrunk across 12 client repositories, from about 155 MB to about 74 MB by its own count, with product photos raised to `--target 85` ([showcase](#showcase)). Savings vary by image: on pinned copies of public repositories, `--check` flagged all 19 of the Vue docs' guide images (74% smaller in all, each scoring 89 or more) but only 2 of Starlight's 12 small portraits (7% smaller in all), in repository bytes ([the trials](https://github.com/lndgalante/oxlint-plugin-slimdeer/blob/main/bench/TRIALS.md)).
 
 ## Why a lint rule
 
-Compressing your images once fixes today's. The rule also catches next month's 2 MB screenshot, whether you, a teammate or a coding agent adds it, in your editor and in the pull request. Vite copies `public/` to the build as it is, and Astro never optimizes images there. The usual fixes run at other moments:
+Compressing your images once fixes today's. The rule also catches next month's 2 MB screenshot, whether you, a teammate or a coding agent adds it: in the pull request, with the lint in CI ([see one](https://github.com/lndgalante/slimdeer-demo/pull/1/files)), and in your editor:
+
+![VS Code with the Oxc extension: "/hero.png" in App.jsx is underlined, and the hover says hero.png could be 70% smaller (509 kB → 151 kB) and gives the command that shrinks it](https://raw.githubusercontent.com/lndgalante/oxlint-plugin-slimdeer/main/docs/images/editor.png)
+
+Vite copies `public/` to the build as it is, and Astro never optimizes images there. The usual fixes run at other moments:
 
 | | When it runs | The committed file |
 |---|---|---|
@@ -63,7 +83,7 @@ npm install --save-dev --save-exact oxlint
 npm install --save-dev oxlint-plugin-slimdeer
 ```
 
-Create `.oxlintrc.json` next to `package.json`, or edit the one you have (Vite's React templates and `npx oxlint --init` create one). The package goes in `jsPlugins`, not `plugins`. If the file has `rules`, add the rule there: a second `rules` key silently replaces the first.
+No `.oxlintrc.json` yet? Create it next to `package.json`:
 
 ```json
 {
@@ -72,7 +92,22 @@ Create `.oxlintrc.json` next to `package.json`, or edit the one you have (Vite's
 }
 ```
 
-Then run `npx oxlint`. It warns on each heavy image, then sums them up.
+Already have one? Vite's React templates and `npx oxlint --init` create it. Add the package under `jsPlugins`, not `plugins`, and put the rule inside the `rules` the file already has: of two `rules` keys, the last one silently wins. In a new Vite React app (the JavaScript template; the TypeScript one also lists `"typescript"` in `plugins`), the file becomes:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "oxc"],
+  "jsPlugins": ["oxlint-plugin-slimdeer"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "slimdeer/compressible-image": "warn"
+  }
+}
+```
+
+Then run `npx oxlint`. It warns on each heavy image, then sums them up. A new app may show no warning, and that can be right: the image in Vite's template would save less than 4 KiB, so it isn't flagged, and `npx oxlint-plugin-slimdeer --check` says how many images it checked. To run without oxlint's own default rules, set `"categories": { "correctness": "off" }` in the file (change the key if the file already has one): only the rules the file names then run.
 
 ## Quick start with ESLint
 
@@ -141,7 +176,7 @@ slimdeer: to shrink the 4 flagged images in place (lossy, so commit first), run:
 
 `--review --flagged` writes the review page for exactly the images the lint flagged, each at the target the lint measured it at, so images the rule's `exclude` option or a disable comment leaves out stay out. `--flagged` shrinks them in place. Both leave out, and name, an image whose bytes changed since the lint; lint again to check it. With one flagged image, the summary offers a preview as a new file instead, like `npx oxlint-plugin-slimdeer public/photo.jpg -o photo.preview.jpg`. The summary also lists images no linted code names, like a background in a CSS file, with where each one is named.
 
-The shrink command marks what it writes, so the rule doesn't flag it again, and keeps each file's name and format, so no code changes. Each lossy pass costs quality, so shrink an image once. An image another tool already compressed can still be flagged: look at it on the review page first.
+The shrink command marks what it writes, so the rule doesn't flag it again, and keeps each file's name and format, so no code changes. Each lossy pass costs quality, so shrink an image once. An image another tool already compressed can still be flagged: look at it on the review page first. The lint keeps warning on an image you decide to keep until you add it to the rule's [`exclude` option](#options).
 
 No warnings at all? [Go through this list](https://github.com/lndgalante/oxlint-plugin-slimdeer/blob/main/docs/rules/compressible-image.md#no-warnings).
 
@@ -190,7 +225,7 @@ An agent adds images too, and the rule warns on them in the agent's own lint run
 npx skills add lndgalante/oxlint-plugin-slimdeer
 ```
 
-Without it, ask the agent to run `npx oxlint-plugin-slimdeer --review` (after a lint, `--review --flagged`) and give you the page's address: without `--open`, it opens nothing and prints the address. The page's command shrinks only the images you keep ticked; run it, or paste it back to the agent.
+Without it, paste [the prompt above](#try-it-on-your-images), or ask the agent to run `npx oxlint-plugin-slimdeer --review` (after a lint, `--review --flagged`) and give you the page's address: without `--open`, it opens nothing and prints the address. The page's command shrinks only the images you keep ticked; run it, or paste it back to the agent.
 
 ## What gets flagged
 
